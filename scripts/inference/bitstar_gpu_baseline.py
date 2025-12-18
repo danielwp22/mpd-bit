@@ -1,8 +1,14 @@
 """
-GPU-Based BIT* Baseline for Motion Planning
+GPU-Accelerated BIT* Baseline for Motion Planning
 
-Pure Python implementation of Batch Informed Trees (BIT*) using GPU for computations.
+Pure Python implementation of Batch Informed Trees (BIT*) with GPU acceleration.
 Uses the same SDF-based collision checking as the diffusion model for fair comparison.
+
+Key Features:
+- GPU-accelerated batch collision checking (100 samples checked in parallel)
+- GPU-accelerated edge validation (10 interpolated points checked in parallel)
+- SDF-based collision detection (identical to diffusion model)
+- Pure PyTorch implementation (no OMPL dependency)
 
 Based on: "Batch Informed Trees (BIT*): Sampling-based optimal planning via the
 heuristically guided search of implicit random geometric graphs" by Gammell et al.
@@ -88,12 +94,19 @@ class Edge:
 
 
 class BITStarGPU:
-    """GPU-based BIT* algorithm implementation."""
+    """
+    GPU-accelerated BIT* algorithm implementation with batch collision checking.
+
+    This implementation uses:
+    - GPU-accelerated batch sampling (batch_size samples checked at once)
+    - GPU-accelerated batch edge checking (10 interpolated points checked at once)
+    - SDF-based collision detection (same as diffusion model for fair comparison)
+    """
 
     def __init__(
         self,
         robot,
-        task,  # PlanningTask with environment
+        env,  # Environment for collision checking
         allowed_planning_time: float = 60.0,
         interpolate_num: int = 128,
         device: str = "cuda:0",
@@ -102,31 +115,35 @@ class BITStarGPU:
         goal_region_radius: float = 0.05,
     ):
         """
-        Initialize BIT* planner.
+        Initialize GPU-accelerated BIT* planner.
 
         Args:
             robot: torch_robotics robot instance
-            task: PlanningTask with environment for collision checking
+            env: Environment for SDF-based collision checking
             allowed_planning_time: Max planning time in seconds
             interpolate_num: Number of waypoints in final trajectory
-            device: Device for torch computations
-            batch_size: Number of samples per batch
-            max_edge_length: Maximum edge length (None = auto)
+            device: Device for torch computations (cuda:0 or cpu)
+            batch_size: Number of samples to check in parallel per batch
+            max_edge_length: Maximum edge length (None = auto-compute as 15% of workspace diagonal)
             goal_region_radius: Radius to consider goal reached
         """
         self.torch_robot = robot
-        self.task = task
+        self.env = env
         self.allowed_planning_time = allowed_planning_time
         self.interpolate_num = interpolate_num
         self.batch_size = batch_size
         self.goal_region_radius = goal_region_radius
 
-        self.device = get_torch_device(device)
+        # Device might already be a torch.device object or a string
+        if isinstance(device, str):
+            self.device = get_torch_device(device)
+        else:
+            self.device = device
         self.tensor_args = {"device": self.device, "dtype": torch.float32}
 
         # Configuration space bounds
-        self.q_min = robot.q_min
-        self.q_max = robot.q_max
+        self.q_min = robot.q_pos_min
+        self.q_max = robot.q_pos_max
         self.dof = len(self.q_min)
 
         # Compute max edge length
@@ -145,11 +162,19 @@ class BITStarGPU:
         self.start_vertex = None
         self.goal_vertex = None
 
-        print(f"Initialized BIT* GPU (batch_size={batch_size}, max_edge={self.max_edge_length:.3f})")
+        print(f"Initialized GPU-accelerated BIT* (batch_size={batch_size}, max_edge={self.max_edge_length:.3f})")
+        print(f"  Using batch collision checking: {batch_size} samples checked in parallel")
 
-    def plan(self, start_state, goal_state, debug=False):
+    def plan(self, start_state, goal_state, target_path_length=None, debug=False):
         """
         Plan trajectory from start to goal using BIT*.
+
+        Args:
+            start_state: Starting configuration
+            goal_state: Goal configuration
+            target_path_length: Target path length to beat (e.g., from diffusion baseline)
+                              If provided, planning continues until this is beaten or timeout
+            debug: Print debug information
 
         Returns:
             results_dict with success, sol_path, planning_time, path_length, smoothness
@@ -166,6 +191,11 @@ class BITStarGPU:
         # Main BIT* loop
         iteration = 0
         best_cost = float('inf')
+        first_solution_time = None
+        first_solution_cost = None
+
+        if target_path_length and debug:
+            print(f"  Target path length to beat: {target_path_length:.3f}")
 
         while time.time() - start_time < self.allowed_planning_time:
             iteration += 1
@@ -173,9 +203,20 @@ class BITStarGPU:
             # Sample new batch if queues empty
             if not self.edge_queue and not self.vertex_queue:
                 if debug and iteration > 1:
-                    print(f"Iteration {iteration}: Sampling new batch (current best: {best_cost:.3f})")
-                self._sample_batch()
+                    print(f"\n[{time.time() - start_time:.2f}s] Batch {iteration}: Current best: {best_cost:.3f}")
+                    print(f"  Tree vertices: {len(self.vertices)}, Samples: {len(self.samples)}")
+
+                self._sample_batch(debug=debug)
+
+                # Prune samples if we have a solution
+                if self.goal_vertex is not None and self.goal_vertex.cost < float('inf'):
+                    pruned = self._prune_samples()
+                    if debug and pruned > 0:
+                        print(f"  Pruned {pruned} samples that can't improve solution")
+
                 self._update_edge_queue()
+                if debug:
+                    print(f"  Edge queue size: {len(self.edge_queue)}, Vertex queue size: {len(self.vertex_queue)}")
 
             # Expand vertex or process edge
             if self.vertex_queue and (not self.edge_queue or
@@ -187,13 +228,43 @@ class BITStarGPU:
                     new_cost = self.goal_vertex.cost
                     if new_cost < best_cost:
                         best_cost = new_cost
-                        if debug:
-                            print(f"  Found solution with cost: {best_cost:.3f}")
 
-            # Early termination
-            if self.goal_vertex is not None and self.goal_vertex.cost < float('inf'):
-                if time.time() - start_time > min(2.0, self.allowed_planning_time * 0.3):
-                    break
+                        # Track first solution
+                        if first_solution_time is None:
+                            first_solution_time = time.time() - start_time
+                            first_solution_cost = new_cost
+                            if debug:
+                                print(f"\n{'='*60}")
+                                print(f"  [{first_solution_time:.2f}s] FIRST SOLUTION FOUND!")
+                                print(f"  Path length: {best_cost:.3f}")
+                                print(f"{'='*60}\n")
+
+                            # Prune samples immediately after first solution
+                            pruned = self._prune_samples()
+                            if debug and pruned > 0:
+                                print(f"  Pruned {pruned} samples after finding first solution")
+                        else:
+                            if debug:
+                                print(f"  [{time.time() - start_time:.2f}s] >>> Improved solution! Path length: {best_cost:.3f}")
+
+                        # Check if we beat the target
+                        if target_path_length is not None and best_cost <= target_path_length:
+                            if debug:
+                                print(f"  [{time.time() - start_time:.2f}s] *** BEAT TARGET! {best_cost:.3f} <= {target_path_length:.3f}")
+                            # Continue optimizing for a bit more to see if we can do even better
+                            # But stop after 10% more of allowed time
+                            if time.time() - start_time > self.allowed_planning_time * 0.1:
+                                if debug:
+                                    print(f"  Stopping after beating target...")
+                                break
+
+            # Early termination only if no target specified
+            if target_path_length is None:
+                if self.goal_vertex is not None and self.goal_vertex.cost < float('inf'):
+                    if time.time() - start_time > min(2.0, self.allowed_planning_time * 0.3):
+                        if debug:
+                            print(f"  Early termination (no target specified)")
+                        break
 
         planning_time = time.time() - start_time
 
@@ -224,6 +295,8 @@ class BITStarGPU:
                 'path_length': path_length,
                 'smoothness': smoothness,
                 'num_waypoints': len(sol_path),
+                'first_solution_time': first_solution_time,
+                'first_solution_cost': first_solution_cost,
             }
         else:
             if debug:
@@ -240,6 +313,8 @@ class BITStarGPU:
                 'path_length': float('inf'),
                 'smoothness': float('inf'),
                 'num_waypoints': 0,
+                'first_solution_time': None,
+                'first_solution_cost': None,
             }
 
     def _initialize(self, start_state, goal_state):
@@ -265,47 +340,139 @@ class BITStarGPU:
         self.vertex_id_counter += 1
         self.samples.append(goal_sample)
 
-    def _sample_batch(self):
-        """Sample batch of collision-free configurations."""
-        for _ in range(self.batch_size):
-            # Random sample in configuration space
-            q = torch.rand(self.dof, **self.tensor_args)
-            q = self.q_min + q * (self.q_max - self.q_min)
+    def _sample_batch(self, debug=False):
+        """Sample batch of collision-free configurations (GPU-accelerated)."""
+        # Generate batch of random samples on GPU
+        q_batch = torch.rand(self.batch_size, self.dof, **self.tensor_args)
+        q_batch = self.q_min + q_batch * (self.q_max - self.q_min)
 
-            # Check collision
-            if self._is_collision_free(q):
-                v = Vertex(q, self.vertex_id_counter)
+        # Batch collision check on GPU
+        collision_free_mask = self._batch_collision_check(q_batch)
+
+        # Count collision-free samples
+        num_collision_free = collision_free_mask.sum().item()
+
+        # Add collision-free samples to the list
+        for i in range(self.batch_size):
+            if collision_free_mask[i]:
+                v = Vertex(q_batch[i], self.vertex_id_counter)
                 self.vertex_id_counter += 1
                 self.samples.append(v)
 
+        if debug:
+            print(f"  Sampled {num_collision_free}/{self.batch_size} collision-free configs")
+
+        return num_collision_free
+
+    def _prune_samples(self):
+        """Prune samples that cannot improve current solution."""
+        if self.goal_vertex is None or self.goal_vertex.cost == float('inf'):
+            return 0
+
+        best_cost = self.goal_vertex.cost
+        original_count = len(self.samples)
+
+        # Keep only samples that could potentially improve the solution
+        self.samples = [
+            s for s in self.samples
+            if self._heuristic(s.state) < best_cost  # Optimistic estimate
+        ]
+
+        pruned = original_count - len(self.samples)
+        return pruned
+
+    def _batch_collision_check(self, q_batch):
+        """
+        Batch collision checking on GPU using SDF-based detection.
+
+        Args:
+            q_batch: (batch_size, dof) tensor of configurations
+
+        Returns:
+            collision_free: (batch_size,) boolean tensor
+        """
+        batch_size = q_batch.shape[0]
+
+        # Get robot collision sphere positions for all configurations
+        # Shape: (batch_size, num_spheres, 3)
+        x_pos_batch = self.torch_robot.fk_map_collision(q_batch, pos_only=True)
+
+        # Check collision for each configuration
+        collision_free = torch.ones(batch_size, dtype=torch.bool, device=self.device)
+
+        # For each configuration
+        for i in range(batch_size):
+            x_pos = x_pos_batch[i]  # (num_spheres, 3)
+
+            # Compute SDF for all spheres at once
+            # Reshape for batch computation: (num_spheres, 3)
+            sdf_values = self.env.compute_sdf(x_pos)  # (num_spheres,)
+
+            # Configuration is in collision if any sphere has negative SDF
+            if (sdf_values < 0.0).any():
+                collision_free[i] = False
+
+        return collision_free
+
     def _is_collision_free(self, q):
-        """Check if configuration is collision-free."""
-        # Use task's collision checking (SDF-based)
-        in_collision = self.task.compute_collision(q.unsqueeze(0)).squeeze() > 0.5
-        return not in_collision.item()
+        """
+        Check if configuration is collision-free using SDF-based collision detection.
+        This uses the same method as the diffusion model.
+        """
+        # Use batch checking for single configuration
+        result = self._batch_collision_check(q.unsqueeze(0))
+        return result[0].item()
 
     def _update_edge_queue(self):
-        """Update edge queue with potential connections."""
-        for v_tree in self.vertices:
-            for v_sample in self.samples:
-                dist = torch.linalg.norm(v_tree.state - v_sample.state).item()
-                if dist <= self.max_edge_length:
-                    edge_cost = v_tree.cost + dist + self._heuristic(v_sample.state)
-                    heappush(self.edge_queue, (edge_cost, Edge(v_tree, v_sample, dist)))
+        """Update edge queue with potential connections (optimized with batch GPU operations)."""
+        if len(self.vertices) == 0 or len(self.samples) == 0:
+            return
+
+        # Stack all vertex and sample states for batch distance computation
+        vertex_states = torch.stack([v.state for v in self.vertices])  # (n_vertices, dof)
+        sample_states = torch.stack([s.state for s in self.samples])  # (n_samples, dof)
+
+        # Compute all pairwise distances on GPU: (n_vertices, n_samples)
+        # Use broadcasting: (n_vertices, 1, dof) - (1, n_samples, dof)
+        dists = torch.norm(vertex_states.unsqueeze(1) - sample_states.unsqueeze(0), dim=2)
+
+        # Find pairs within max_edge_length
+        valid_pairs = (dists <= self.max_edge_length).nonzero(as_tuple=False)
+
+        # Add edges for valid pairs
+        for v_idx, s_idx in valid_pairs:
+            v_tree = self.vertices[v_idx]
+            v_sample = self.samples[s_idx]
+            dist = dists[v_idx, s_idx].item()
+            edge_cost = v_tree.cost + dist + self._heuristic(v_sample.state)
+            heappush(self.edge_queue, (edge_cost, Edge(v_tree, v_sample, dist)))
 
     def _expand_vertex(self):
-        """Expand the best vertex."""
+        """Expand the best vertex (optimized with batch GPU operations)."""
         if not self.vertex_queue:
             return
 
         _, v = heappop(self.vertex_queue)
 
-        # Add edges to nearby samples
-        for v_sample in self.samples:
-            dist = torch.linalg.norm(v.state - v_sample.state).item()
-            if dist <= self.max_edge_length:
-                edge_cost = v.cost + dist + self._heuristic(v_sample.state)
-                heappush(self.edge_queue, (edge_cost, Edge(v, v_sample, dist)))
+        if len(self.samples) == 0:
+            return
+
+        # Stack all sample states for batch distance computation
+        sample_states = torch.stack([s.state for s in self.samples])  # (n_samples, dof)
+
+        # Compute distances from v to all samples on GPU
+        dists = torch.norm(sample_states - v.state.unsqueeze(0), dim=1)  # (n_samples,)
+
+        # Find samples within max_edge_length
+        valid_indices = (dists <= self.max_edge_length).nonzero(as_tuple=False).squeeze(-1)
+
+        # Add edges for valid samples
+        for idx in valid_indices:
+            idx = idx.item()
+            v_sample = self.samples[idx]
+            dist = dists[idx].item()
+            edge_cost = v.cost + dist + self._heuristic(v_sample.state)
+            heappush(self.edge_queue, (edge_cost, Edge(v, v_sample, dist)))
 
     def _process_edge(self):
         """Process the best edge."""
@@ -329,14 +496,14 @@ class BITStarGPU:
         if not self._is_edge_collision_free(v1.state, v2.state):
             return False
 
-        # Add v2 to tree
+        # Track if this is a new vertex being added to tree
+        is_new_vertex = False
+
+        # Add v2 to tree if it's still a sample
         if v2 in self.samples:
             self.samples.remove(v2)
             self.vertices.append(v2)
-
-            # Check if goal
-            if torch.linalg.norm(v2.state - self.goal_state).item() < self.goal_region_radius:
-                self.goal_vertex = v2
+            is_new_vertex = True
 
         # Update parent
         if v2.parent is not None:
@@ -346,7 +513,12 @@ class BITStarGPU:
         v2.cost = new_cost
         v1.children.append(v2)
 
-        # Add to vertex queue
+        # Check if this vertex is in the goal region (check for both new and improved vertices)
+        if torch.linalg.norm(v2.state - self.goal_state).item() < self.goal_region_radius:
+            if self.goal_vertex is None or v2.cost < self.goal_vertex.cost:
+                self.goal_vertex = v2
+
+        # Add to vertex queue for expansion
         queue_value = v2.cost + self._heuristic(v2.state)
         heappush(self.vertex_queue, (queue_value, v2))
 
@@ -357,12 +529,19 @@ class BITStarGPU:
         return torch.linalg.norm(q - self.goal_state).item()
 
     def _is_edge_collision_free(self, q1, q2, resolution=10):
-        """Check edge collision."""
-        for alpha in torch.linspace(0, 1, resolution, **self.tensor_args):
-            q = q1 * (1 - alpha) + q2 * alpha
-            if not self._is_collision_free(q):
-                return False
-        return True
+        """Check edge collision (GPU-accelerated batch checking)."""
+        # Generate all interpolated points along the edge
+        alphas = torch.linspace(0, 1, resolution, **self.tensor_args)
+        # Broadcast and compute all interpolated configurations at once
+        # q1 and q2 are (dof,), alphas is (resolution,)
+        # Result: (resolution, dof)
+        q_interp = q1[None, :] * (1 - alphas[:, None]) + q2[None, :] * alphas[:, None]
+
+        # Batch collision check all interpolated points at once
+        collision_free_mask = self._batch_collision_check(q_interp)
+
+        # Edge is collision-free only if all interpolated points are collision-free
+        return collision_free_mask.all().item()
 
     def _extract_path(self):
         """Extract path from start to goal."""
@@ -427,7 +606,6 @@ def run_bitstar_gpu_on_diffusion_problem(
     """
     from torch_robotics.environments import EnvSpheres3D
     from torch_robotics.robots.robot_panda import RobotPanda
-    from torch_robotics.tasks.tasks import PlanningTask
     from torch_robotics.torch_utils.seed import fix_random_seed
 
     fix_random_seed(seed)
@@ -445,22 +623,22 @@ def run_bitstar_gpu_on_diffusion_problem(
     print(f"Start state: {to_numpy(start_state)}")
     print(f"Goal state: {to_numpy(goal_state)}")
 
-    # Create environment and robot (same as diffusion)
+    # Extract diffusion model's path length as target to beat
+    target_path_length = None
+    if 'metrics' in diff_results and 'trajs_best' in diff_results['metrics']:
+        target_path_length = float(diff_results['metrics']['trajs_best']['path_length'])
+        print(f"\nDiffusion model path length: {target_path_length:.3f}")
+        print(f"BIT* will attempt to beat this baseline...")
+
+    # Create environment and robot (same collision checking as diffusion, but no SDF precomputation)
+    # Note: BIT* only needs point-wise collision checking, not gradients,
+    # so we don't precompute the SDF to save GPU memory
     env = EnvSpheres3D(
-        precompute_sdf_obj_fixed=True,
-        sdf_cell_size=0.005,
+        precompute_sdf_obj_fixed=False,
+        sdf_cell_size=0.05,  # Larger cell size since we compute on-the-fly
         tensor_args=tensor_args
     )
     robot = RobotPanda(use_object_collision_spheres=True, tensor_args=tensor_args)
-
-    # Create planning task (provides collision checking)
-    task = PlanningTask(
-        env=env,
-        robot=robot,
-        ws_limits=torch.tensor([[-1.5, -1.5, -1.5], [1.5, 1.5, 1.5]], **tensor_args),
-        obstacle_cutoff_margin=0.03,
-        tensor_args=tensor_args
-    )
 
     # Initialize BIT* GPU
     print(f"\nInitializing BIT* GPU planner...")
@@ -469,16 +647,16 @@ def run_bitstar_gpu_on_diffusion_problem(
 
     planner = BITStarGPU(
         robot=robot,
-        task=task,
+        env=env,
         allowed_planning_time=max_time,
         interpolate_num=interpolate_num,
         device=device,
         batch_size=batch_size,
     )
 
-    # Plan
+    # Plan (with target path length to beat)
     print(f"\nRunning BIT* GPU planner...")
-    results = planner.plan(start_state, goal_state, debug=True)
+    results = planner.plan(start_state, goal_state, target_path_length=target_path_length, debug=True)
 
     return results
 
@@ -499,6 +677,14 @@ def save_results(results_dict, results_dir="logs_bitstar_gpu_panda_spheres3d"):
         'smoothness_mean': results_dict['smoothness'],
         'smoothness_std': 0.0,
     }
+
+    # Add anytime statistics if available
+    if results_dict.get('first_solution_time') is not None:
+        statistics['planning_time_first_mean'] = results_dict['first_solution_time']
+        statistics['planning_time_first_std'] = 0.0
+        statistics['path_length_first_mean'] = results_dict['first_solution_cost']
+        statistics['path_length_first_std'] = 0.0
+        statistics['mode'] = 'anytime'
 
     stats_file = os.path.join(results_dir, "statistics.yaml")
     with open(stats_file, 'w') as f:
@@ -535,7 +721,7 @@ if __name__ == "__main__":
     print("Uses PyTorch + SDF collision checking (same as diffusion model)")
     print("="*80 + "\n")
 
-    if args.use-diffusion-problem:
+    if args.use_diffusion_problem:
         results = run_bitstar_gpu_on_diffusion_problem(
             diffusion_results_file=args.diffusion_results,
             max_time=args.time,

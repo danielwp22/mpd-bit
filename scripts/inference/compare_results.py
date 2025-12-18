@@ -71,7 +71,22 @@ def print_comparison(diff_results, baseline_stats, baseline_name="BIT*"):
     baseline_path_length = baseline_stats.get('path_length_mean', float('inf'))
     baseline_path_length_std = baseline_stats.get('path_length_std', 0)
 
-    print(f"\n{'Path Length (best/mean)':<30} {diff_path_length:.3f}{'':<16} {baseline_path_length:.3f} ± {baseline_path_length_std:.3f}")
+    # Convert 'inf' string to float if needed
+    if isinstance(baseline_path_length, str) and baseline_path_length == 'inf':
+        baseline_path_length = float('inf')
+    if isinstance(baseline_path_length_std, str) and baseline_path_length_std == 'inf':
+        baseline_path_length_std = float('inf')
+
+    baseline_path_length = float(baseline_path_length)
+    baseline_path_length_std = float(baseline_path_length_std)
+
+    # Format inf values nicely
+    if baseline_path_length == float('inf'):
+        baseline_path_str = "inf"
+    else:
+        baseline_path_str = f"{baseline_path_length:.3f} ± {baseline_path_length_std:.3f}"
+
+    print(f"\n{'Path Length (best/mean)':<30} {diff_path_length:.3f}{'':<16} {baseline_path_str}")
 
     if 'path_length_mean' in diff_metrics.get('trajs_valid', {}):
         diff_path_length_mean = float(diff_metrics['trajs_valid']['path_length_mean'])
@@ -82,7 +97,20 @@ def print_comparison(diff_results, baseline_stats, baseline_name="BIT*"):
     if is_anytime and 'path_length_first_mean' in baseline_stats:
         baseline_first_length = baseline_stats.get('path_length_first_mean', float('inf'))
         baseline_first_length_std = baseline_stats.get('path_length_first_std', 0)
-        print(f"{'  First solution path length':<30} {'N/A':<20} {baseline_first_length:.3f} ± {baseline_first_length_std:.3f}")
+
+        # Convert 'inf' string to float if needed
+        if isinstance(baseline_first_length, str) and baseline_first_length == 'inf':
+            baseline_first_length = float('inf')
+        if isinstance(baseline_first_length_std, str) and baseline_first_length_std == 'inf':
+            baseline_first_length_std = float('inf')
+
+        baseline_first_length = float(baseline_first_length)
+        baseline_first_length_std = float(baseline_first_length_std)
+
+        if baseline_first_length == float('inf'):
+            print(f"{'  First solution path length':<30} {'N/A':<20} inf")
+        else:
+            print(f"{'  First solution path length':<30} {'N/A':<20} {baseline_first_length:.3f} ± {baseline_first_length_std:.3f}")
 
     # Planning/Inference Time
     diff_time = diff_results.get('t_inference_total', 0)
@@ -129,9 +157,24 @@ def print_comparison(diff_results, baseline_stats, baseline_name="BIT*"):
         baseline_smoothness = baseline_stats.get('smoothness_mean', None)
         baseline_smoothness_std = baseline_stats.get('smoothness_std', 0)
 
-        if baseline_smoothness is not None and baseline_smoothness != float('inf'):
-            baseline_str = f"{baseline_smoothness:.3f} ± {baseline_smoothness_std:.3f}"
-            print(f"\n{'Smoothness (lower=better)':<30} {diff_smoothness:.3f}{'':<16} {baseline_str}")
+        # Convert 'inf' string to float if needed
+        if isinstance(baseline_smoothness, str) and baseline_smoothness == 'inf':
+            baseline_smoothness = float('inf')
+        if isinstance(baseline_smoothness_std, str) and baseline_smoothness_std == 'inf':
+            baseline_smoothness_std = float('inf')
+
+        if baseline_smoothness is not None:
+            # Try to convert to float
+            try:
+                baseline_smoothness = float(baseline_smoothness)
+                baseline_smoothness_std = float(baseline_smoothness_std)
+                if baseline_smoothness != float('inf'):
+                    baseline_str = f"{baseline_smoothness:.3f} ± {baseline_smoothness_std:.3f}"
+                    print(f"\n{'Smoothness (lower=better)':<30} {diff_smoothness:.3f}{'':<16} {baseline_str}")
+                else:
+                    print(f"\n{'Smoothness (lower=better)':<30} {diff_smoothness:.3f}{'':<16} N/A")
+            except (ValueError, TypeError):
+                print(f"\n{'Smoothness (lower=better)':<30} {diff_smoothness:.3f}{'':<16} N/A")
         else:
             print(f"\n{'Smoothness (lower=better)':<30} {diff_smoothness:.3f}{'':<16} N/A")
 

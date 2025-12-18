@@ -1,0 +1,15 @@
+mode: anytime
+n_problems: 1
+path_length_first_mean: 33.335084557533264
+path_length_first_std: 0.0
+path_length_mean: 32.59075164794922
+path_length_std: 0.0
+planner: BITstar-GPU
+planning_time_first_mean: 23.352805376052856
+planning_time_first_std: 0.0
+planning_time_mean: 60.010794162750244
+planning_time_std: 0.0
+smoothness_mean: 6.525341987609863
+smoothness_std: 0.0
+success_count: 1
+success_rate: 1.0
