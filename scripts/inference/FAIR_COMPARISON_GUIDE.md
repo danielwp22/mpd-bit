@@ -14,7 +14,7 @@ python inference.py
 # Results saved to: logs/2/results_single_plan-000.pt
 
 # 2. Run BIT* on the SAME start/goal
-python bitstar_baseline.py --from-diffusion logs/2/results_single_plan-000.pt
+python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt
 
 # 3. Compare the results
 python compare_results.py
@@ -137,7 +137,7 @@ This generates a problem instance and saves it to `logs/2/results_single_plan-00
 ### Step 2: Run BIT* on the Same Problem
 
 ```bash
-python bitstar_baseline.py --from-diffusion logs/2/results_single_plan-000.pt
+python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt
 ```
 
 This:
@@ -185,9 +185,9 @@ To compare against multiple OMPL planners:
 python inference.py
 
 # Run multiple baselines on the same problem
-python bitstar_baseline.py --from-diffusion logs/2/results_single_plan-000.pt --planner BITstar
-python bitstar_baseline.py --from-diffusion logs/2/results_single_plan-000.pt --planner RRTConnect
-python bitstar_baseline.py --from-diffusion logs/2/results_single_plan-000.pt --planner RRTstar
+python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt --planner BITstar
+python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt --planner RRTConnect
+python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt --planner RRTstar
 
 # Compare all at once
 python compare_results.py --baselines bitstar rrtconnect rrtstar --summary
@@ -497,7 +497,7 @@ trajectories (smoothness: 57.4 vs. 142.3) and was 4.9× faster.
 ## Summary Checklist
 
 - [ ] Run diffusion model, save results with start/goal
-- [ ] Run BIT* using `--from-diffusion` flag with same problem
+- [ ] Run BIT* using `--use-diffusion-problem --diffusion-results` flags with same problem
 - [ ] Verify environment configurations match
 - [ ] Compare on same metrics (path length, time, success)
 - [ ] Report sample size (N problems) for statistical validity
