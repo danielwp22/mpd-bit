@@ -1,0 +1,16 @@
+n_problems: 1
+path_length_max: 5.7115302085876465
+path_length_mean: 5.7115302085876465
+path_length_min: 5.7115302085876465
+path_length_std: 0.0
+planner: BITstar
+planning_time_max: 0.44846630096435547
+planning_time_mean: 0.44846630096435547
+planning_time_min: 0.44846630096435547
+planning_time_std: 0.0
+smoothness_max: 0.0
+smoothness_mean: 0.0
+smoothness_min: 0.0
+smoothness_std: 0.0
+success_count: 1
+success_rate: 1.0

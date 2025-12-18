@@ -40,8 +40,8 @@ def experiment(
     # cfg_inference_path: str = './cfgs/config_EnvNarrowPassageDense2D-RobotPointMass2D_00.yaml',
     # cfg_inference_path: str = './cfgs/config_EnvPlanar2Link-RobotPlanar2Link_00.yaml',
     # cfg_inference_path: str = './cfgs/config_EnvPlanar4Link-RobotPlanar4Link_00.yaml',
-    cfg_inference_path: str = './cfgs/config_EnvSimple2D-RobotPointMass2D_00.yaml',
-    # cfg_inference_path: str = './cfgs/config_EnvSpheres3D-RobotPanda_00.yaml',
+    # cfg_inference_path: str = './cfgs/config_EnvSimple2D-RobotPointMass2D_00.yaml',
+    cfg_inference_path: str = './cfgs/config_EnvSpheres3D-RobotPanda_00.yaml',
     # cfg_inference_path: str = "./cfgs/config_EnvWarehouse-RobotPanda-config_file_v01_00.yaml",
     ########################################################################
     # Select the start and goal from the training or validation/test set.
@@ -53,15 +53,15 @@ def experiment(
     save_results_single_plan_low_mem: bool = False,
     ########################################################################
     # Visualization options
-    render_joint_space_time_iters: bool = True,
+    render_joint_space_time_iters: bool = False,
     render_joint_space_env_iters: bool = False,
     render_env_robot_opt_iters: bool = False,
     render_env_robot_trajectories: bool = False,
     render_pybullet: bool = False,
     draw_collision_spheres: bool = False,
-    run_evaluation_issac_gym: bool = False,
+    run_evaluation_issac_gym: bool = True,
     render_isaacgym_viewer: bool = False,
-    render_isaacgym_movie: bool = False,
+    render_isaacgym_movie: bool = True,
     ########################################################################
     device: str = "cuda:0",  # cpu, cuda
     debug: bool = False,
