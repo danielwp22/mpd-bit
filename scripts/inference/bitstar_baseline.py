@@ -24,7 +24,35 @@ from pb_ompl.pb_ompl import PbOMPL, PbOMPLRobot
 # Now safe to import torch
 import torch
 from torch_robotics.torch_utils.torch_utils import get_torch_device, to_torch, to_numpy
-from torch_robotics.trajectory.metrics import compute_path_length, compute_smoothness
+from torch_robotics.trajectory.metrics import compute_path_length
+
+
+def compute_smoothness_finite_diff(trajs):
+    """
+    Compute smoothness using finite differences (for position-only trajectories).
+
+    Smoothness = sum of acceleration magnitudes along the trajectory.
+
+    Args:
+        trajs: Trajectory tensor of shape (batch, horizon, q_dim) containing only positions
+
+    Returns:
+        smoothness: Tensor of shape (batch,) with smoothness values
+    """
+    assert trajs.ndim == 3  # batch, horizon, q_dim
+
+    # Compute velocities using finite differences
+    # vel[t] = (pos[t+1] - pos[t])
+    velocities = torch.diff(trajs, dim=1)  # (batch, horizon-1, q_dim)
+
+    # Compute accelerations using finite differences on velocities
+    # acc[t] = (vel[t+1] - vel[t])
+    accelerations = torch.diff(velocities, dim=1)  # (batch, horizon-2, q_dim)
+
+    # Compute smoothness as sum of acceleration norms
+    smoothness = torch.linalg.norm(accelerations, dim=-1).sum(-1)  # (batch,)
+
+    return smoothness
 
 
 def convert_to_serializable(obj):
@@ -189,8 +217,8 @@ class BITStarBaseline:
             # Compute path length
             path_length = compute_path_length(sol_path_torch, self.torch_robot)[0].item()
 
-            # Compute smoothness (sum of acceleration norms)
-            smoothness = compute_smoothness(sol_path_torch, self.torch_robot)[0].item()
+            # Compute smoothness using finite differences (BITstar returns position-only trajectories)
+            smoothness = compute_smoothness_finite_diff(sol_path_torch)[0].item()
 
             results_dict['path_length'] = path_length
             results_dict['smoothness'] = smoothness
@@ -312,7 +340,7 @@ class BITStarBaseline:
                 if first_solution_time is None:
                     first_solution_time = elapsed
                     first_solution_path_length = path_length
-                    smoothness_first = compute_smoothness(sol_path_torch, self.torch_robot)[0].item()
+                    smoothness_first = compute_smoothness_finite_diff(sol_path_torch)[0].item()
                     first_solution_smoothness = smoothness_first
 
                     if debug:
@@ -364,7 +392,7 @@ class BITStarBaseline:
 
             sol_path_torch = to_torch(sol_path_final[None, ...], **self.tensor_args)
             path_length_final = compute_path_length(sol_path_torch, self.torch_robot)[0].item()
-            smoothness_final = compute_smoothness(sol_path_torch, self.torch_robot)[0].item()
+            smoothness_final = compute_smoothness_finite_diff(sol_path_torch)[0].item()
 
             results_dict = {
                 'success': True,
@@ -576,8 +604,8 @@ def run_panda_spheres3d(
         goal_states = []
         for i in range(n_problems):
             # Sample random joint configurations
-            q_start = robot.sample_q_pos()
-            q_goal = robot.sample_q_pos()
+            q_start = robot.random_q(n_samples=1)[0]  # Get single sample from batch
+            q_goal = robot.random_q(n_samples=1)[0]   # Get single sample from batch
             start_states.append(to_numpy(q_start))
             goal_states.append(to_numpy(q_goal))
             print(f"  Sampled problem {i+1}/{n_problems}")

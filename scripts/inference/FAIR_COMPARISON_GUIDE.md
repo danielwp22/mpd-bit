@@ -1,10 +1,32 @@
-# Fair Comparison Guide: Diffusion Model vs BIT* (and other OMPL planners)
+# Fair Comparison Guide: Diffusion Model vs BIT*
 
-This guide ensures you compare the diffusion model and BIT* on **exactly the same problem instances** with **the same environment configuration**.
+This guide ensures you compare the diffusion model and BIT* on **exactly the same problem instances** with **the same environment configuration** and **the same collision checking method**.
 
 ---
 
-## Quick Start: Run BIT* on Same Problem as Diffusion Model
+## Which BIT* Implementation to Use?
+
+We provide **two BIT* implementations** for comparison:
+
+### 1. **GPU-Based BIT*** (Recommended - Fairest Comparison)
+- **Script**: `bitstar_gpu_baseline.py`
+- **Collision Checking**: SDF-based (same as diffusion model) ✅
+- **Platform**: Pure Python + PyTorch (GPU)
+- **Why Fair**: Uses identical environment representation and collision detection
+- **Use when**: You want the most apples-to-apples comparison
+
+### 2. **OMPL-Based BIT*** (Traditional Baseline)
+- **Script**: `bitstar_baseline.py`
+- **Collision Checking**: Geometric (different from diffusion) ⚠️
+- **Platform**: C++ OMPL library via PyBullet
+- **Why Different**: Different collision detection may give different success rates
+- **Use when**: You want to compare against established motion planning libraries
+
+**Recommendation**: Use the **GPU-based version** for fair comparisons in papers/research, as it eliminates the confounding variable of different collision checking methods.
+
+---
+
+## Quick Start: Run BIT* GPU on Same Problem as Diffusion Model
 
 ```bash
 cd /home/ubuntu/Projects/MotionPlanningDiffusion/mpd-splines-public/scripts/inference
@@ -13,94 +35,18 @@ cd /home/ubuntu/Projects/MotionPlanningDiffusion/mpd-splines-public/scripts/infe
 python inference.py
 # Results saved to: logs/2/results_single_plan-000.pt
 
-# 2. Run BIT* on the SAME start/goal
-python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt
+# 2. Run BIT* GPU on the SAME start/goal (RECOMMENDED)
+python bitstar_gpu_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt
 
 # 3. Compare the results
-python compare_results.py
+python compare_results.py --baselines bitstar_gpu
 ```
 
----
-
-## Anytime Comparison: Tracking BIT*'s Optimization Progress
-
-BIT* is an **anytime** algorithm, meaning it finds an initial solution quickly, then continues to improve it over time. To fairly compare with the diffusion model, you can track:
-
-1. **Time to first solution** - How long BIT* takes to find any valid path
-2. **Time to match diffusion quality** - How long BIT* takes to find a path as good as the diffusion model's
-3. **Final solution quality** - How much BIT* improves given the full time budget
-
-### Quick Start: Anytime Comparison
-
+**Alternative**: Use OMPL-based BIT*:
 ```bash
-# 1. Run diffusion model
-python inference.py
-# Suppose it finds a path with length 7.5 in 2.3 seconds
-
-# 2. Run BIT* in anytime mode with the same problem
-python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt --anytime --time 60.0
-
-# Output will show:
-#   [0.52s] First solution found! Path length: 9.2
-#   [3.41s] Improved solution! Path length: 8.1
-#   [7.89s] Reached target quality! Path length: 7.4 <= 7.5
-#   (stops early since it beat the target)
-
-# 3. Compare results
-python compare_results.py
+python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt
+python compare_results.py --baselines bitstar
 ```
-
-### What Gets Tracked in Anytime Mode
-
-The anytime mode records:
-- **First solution time**: When BIT* first finds any collision-free path
-- **First solution path length**: Quality of that initial path
-- **Target quality time**: When BIT* finds a path ≤ diffusion model's path length
-- **Final solution**: Best path found within the time budget
-- **Improvement ratio**: How much BIT* improved from first to final solution
-
-### Example Anytime Comparison Output
-
-```
-================================================================================
-COMPARISON: Diffusion Model vs BITSTAR
-(Baseline in ANYTIME mode)
-================================================================================
-
-Metric                         Diffusion            BITSTAR
---------------------------------------------------------------------------------
-Success (single trajectory)    1                    1/1
-Success rate (%)               87.0%                100.0%
-
-Path Length (best/mean)        7.500                7.412 ± 0.000
-  First solution path length   N/A                  9.234 ± 0.000
-
-Planning Time (sec)            Diffusion            BITSTAR
-  Total time                   2.300                7.892 ± 0.000
-  Time to first solution       2.300                0.521 ± 0.000
-
-Target Quality Comparison
-  Target path length           7.500
-  Reached target (%)           N/A                  100.0%
-  Time to reach target         2.300 sec            7.892 ± 0.000 sec
-================================================================================
-```
-
-### Key Insights from Anytime Comparison
-
-1. **Speed vs Quality Tradeoff**:
-   - Diffusion: Fixed time (e.g., 2.3s) → Fixed quality (e.g., 7.5)
-   - BIT*: Variable time → Improving quality
-     - 0.5s → Path length 9.2 (fast but lower quality)
-     - 7.9s → Path length 7.4 (slower but beats diffusion)
-
-2. **When Diffusion Wins**:
-   - If you need a solution in < first solution time (e.g., < 0.5s)
-   - If diffusion quality is good enough and faster than target time
-
-3. **When BIT* Wins**:
-   - If you can afford more time than diffusion (anytime optimization)
-   - If you need the best possible solution (let it run longer)
 
 ---
 
@@ -108,19 +54,21 @@ Target Quality Comparison
 
 When comparing motion planning algorithms, you need to ensure:
 
-1. **Same Start and Goal States**: Both algorithms solve the exact same problem
-2. **Same Environment**: Identical obstacle configurations
-3. **Same Robot Configuration**: Same kinematic parameters, joint limits, etc.
-4. **Same Success Criteria**: Consistent collision checking and goal tolerance
-5. **Same Trajectory Resolution**: Same number of waypoints (default: 128)
+1. **Same Start and Goal States**: Both algorithms solve the exact same problem ✅
+2. **Same Environment**: Identical obstacle configurations ✅
+3. **Same Collision Checking**: **This is critical!** ⚠️
+   - The GPU-based BIT* uses **SDF-based collision checking** (same as diffusion)
+   - The OMPL-based BIT* uses **geometric collision checking** (different!)
+   - Different collision checking can lead to different success rates and path qualities
+4. **Same Trajectory Resolution**: Same number of waypoints (default: 128) ✅
 
-Without this, you're comparing apples to oranges.
+**Key Insight**: The GPU-based BIT* (`bitstar_gpu_baseline.py`) eliminates the collision checking confound, making it the fairest comparison.
 
 ---
 
-## Method 1: Run BIT* on Diffusion Model's Problems (Recommended)
+## Method 1: Run BIT* GPU on Diffusion Model's Problems (Recommended)
 
-This is the **easiest and most reliable** method.
+This is the **easiest and fairest** method.
 
 ### Step 1: Run Diffusion Model
 
@@ -134,28 +82,29 @@ This generates a problem instance and saves it to `logs/2/results_single_plan-00
 - Environment configuration
 - Diffusion model solution
 
-### Step 2: Run BIT* on the Same Problem
+### Step 2: Run BIT* GPU on the Same Problem
 
 ```bash
-python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt
+python bitstar_gpu_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt
 ```
 
 This:
 1. Loads the exact start/goal from the diffusion results
-2. Recreates the same environment
+2. Recreates the same environment with SDF collision checking
 3. Runs BIT* on that problem
-4. Saves results to `logs_bitstar_panda_spheres3d/`
+4. Saves results to `logs_bitstar_gpu_panda_spheres3d/`
 
 ### Step 3: Compare Results
 
 ```bash
-python compare_results.py
+python compare_results.py --baselines bitstar_gpu
 ```
 
 Output example:
+
 ```
 ================================================================================
-COMPARISON: Diffusion Model vs BITSTAR
+COMPARISON: Diffusion Model vs BITSTAR-GPU
 ================================================================================
 
 Metric                         Diffusion            BITSTAR
@@ -266,19 +215,25 @@ python compare_results.py --aggregate --n-problems 50
 
 ### Planning Time
 - **Diffusion**: Total inference time (generation + guidance)
-- **BIT***: Time to find a solution (or timeout)
+- **BIT* GPU**: Time to find a solution (or timeout)
+- **BIT* OMPL**: Time to find a solution (or timeout)
 
-**Note**: Diffusion time includes GPU forward passes; BIT* is CPU-only
+**Note**:
+- Diffusion uses GPU for neural network inference
+- BIT* GPU uses GPU for collision checking and computations
+- BIT* OMPL is CPU-only (C++ implementation)
 
 ### Smoothness
-- **Diffusion**: Sum of acceleration magnitudes (lower is smoother)
-- **BIT***: Not computed by default (add custom metric if needed)
+- **Diffusion**: Sum of acceleration magnitudes from B-spline representation (lower is smoother)
+- **BIT* GPU**: Sum of acceleration magnitudes computed via finite differences ✅
+- **BIT* OMPL**: Sum of acceleration magnitudes computed via finite differences ✅
 
 **Formula**: `Σ ||q̈(t)||` where `q̈` is configuration acceleration
 
 ### Collision Intensity
 - **Diffusion**: Average SDF penetration depth into obstacles
-- **BIT***: Not applicable (OMPL uses binary collision checking)
+- **BIT* GPU**: Can be computed (uses SDF) but not computed by default
+- **BIT* OMPL**: Not applicable (uses geometric/binary collision checking)
 
 ---
 
@@ -331,53 +286,23 @@ bitstar_result = run_bitstar(start=start, goal=goal)
 ```
 
 ### ❌ Don't Compare
+- **Diffusion (SDF collision) vs BIT* OMPL (geometric collision)** - Different collision checking!
 - Diffusion on one environment vs BIT* on a different environment
 - Diffusion with 128 waypoints vs BIT* with 50 waypoints
 - Diffusion success rate (%) vs BIT* binary success (this is apples-to-oranges)
 
 ### ✅ Do Compare
+- **Diffusion vs BIT* GPU** - Same SDF collision checking! ✅
 - Path length of best trajectory from each method
-- Planning time (but note GPU vs CPU difference)
+- Planning time (both use GPU)
 - Success on the same set of N problem instances
-- Smoothness if you compute it for BIT* trajectories
-
----
-
-## Advanced: Adding Custom Metrics to BIT*
-
-To compute smoothness for BIT* trajectories:
-
-```python
-# In bitstar_baseline.py
-
-def compute_smoothness(trajectory):
-    """Compute smoothness metric for a trajectory."""
-    # trajectory shape: (n_waypoints, n_dof)
-
-    # Compute velocities (finite differences)
-    velocities = np.diff(trajectory, axis=0)
-
-    # Compute accelerations
-    accelerations = np.diff(velocities, axis=0)
-
-    # Smoothness = sum of acceleration magnitudes
-    smoothness = np.sum(np.linalg.norm(accelerations, axis=1))
-
-    return smoothness
-
-# Add to statistics
-result = baseline.plan(start, goal)
-if result['success']:
-    trajectory = result['trajectory']
-    smoothness = compute_smoothness(trajectory)
-    statistics['smoothness_values'].append(smoothness)
-```
+- Smoothness (both methods compute this automatically)
 
 ---
 
 ## Example: Complete Fair Comparison Workflow
 
-### Standard Comparison
+### Standard Comparison (Recommended)
 
 ```bash
 # 1. Run diffusion model inference
@@ -388,49 +313,29 @@ python inference.py
 # 2. View diffusion metrics
 python view_metrics.py --results-file logs/2/results_single_plan-000.pt
 
-# 3. Run BIT* on the same problem
-python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt
+# 3. Run BIT* GPU on the same problem (FAIREST comparison - same SDF collision checking)
+python bitstar_gpu_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt
 
-# 4. Run RRT-Connect for comparison
-python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt --planner RRTConnect
+# 4. Compare the results
+python compare_results.py --baselines bitstar_gpu
 
-# 5. Compare all methods
-python compare_results.py --baselines bitstar rrtconnect
-
-# 6. Generate summary table
-python compare_results.py --baselines bitstar rrtconnect --summary
+# 5. Generate summary table
+python compare_results.py --baselines bitstar_gpu --summary
 ```
 
-### Anytime Comparison Workflow
+### Using OMPL Baselines (Optional)
+
+If you want to compare against traditional OMPL planners (note: different collision checking):
 
 ```bash
-# 1. Run diffusion model inference
-python inference.py
-# Output: logs/2/results_single_plan-000.pt
-# Suppose diffusion finds path length 7.5 in 2.3 seconds
+# Run OMPL BIT*
+python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt
 
-# 2. Run BIT* in ANYTIME mode on the same problem
-python bitstar_baseline.py \
-    --use-diffusion-problem \
-    --diffusion-results logs/2/results_single_plan-000.pt \
-    --anytime \
-    --time 60.0
+# Run OMPL RRT-Connect
+python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt --planner RRTConnect
 
-# This will:
-# - Load the diffusion path length (7.5) as the target
-# - Track when BIT* finds its first solution
-# - Track when BIT* reaches quality ≤ 7.5
-# - Stop early if it beats the target before 60 seconds
-# - Save detailed timing statistics
-
-# 3. View the anytime comparison
-python compare_results.py
-
-# Output will show:
-# - Time to first solution vs diffusion time
-# - Whether BIT* reached target quality
-# - How long it took to reach target quality
-# - Final solution quality after full optimization
+# Compare all
+python compare_results.py --baselines bitstar_gpu bitstar rrtconnect
 ```
 
 ---
@@ -464,14 +369,20 @@ When reporting comparisons in papers:
 ```latex
 We evaluated our diffusion-based planner against BIT* \cite{bitstar}
 on 50 identical problem instances in the Panda + Spheres3D environment.
-The diffusion model achieved a 87\% success rate with mean path length
-7.12 ± 0.95 in 2.5s inference time, while BIT* achieved 94\% success
-with mean path length 7.45 ± 1.12 in 12.3s planning time. While BIT*
-found solutions more reliably, the diffusion model produced smoother
-trajectories (smoothness: 57.4 vs. 142.3) and was 4.9× faster.
+To ensure a fair comparison, we implemented BIT* using the same SDF-based
+collision checking as our diffusion model. The diffusion model achieved
+an 87\% success rate with mean path length 7.12 ± 0.95 in 2.5s inference
+time, while BIT* achieved 94\% success with mean path length 7.45 ± 1.12
+in 12.3s planning time. While BIT* found solutions more reliably, the
+diffusion model produced smoother trajectories (smoothness: 57.4 vs. 142.3)
+and was 4.9× faster.
 ```
 
-**Key**: Always mention you tested on identical problem instances!
+**Key Points to Mention**:
+- Tested on identical problem instances ✅
+- **Used same collision checking method** ✅
+- Reported both success rates and path quality ✅
+- Acknowledged different strengths of each method ✅
 
 ---
 
@@ -483,31 +394,44 @@ trajectories (smoothness: 57.4 vs. 142.3) and was 4.9× faster.
 - Try increasing `n_samples` in config
 
 ### "Diffusion succeeds but BIT* fails"
-- Check timeout: BIT* may need more time
-- Verify environment matching: SDF vs geometric collision checking differs
-- BIT* may be stuck in local optima
+- Check timeout: BIT* may need more time (increase `--time`)
+- Try larger batch size (increase `--batch-size`)
+- BIT* may be stuck in local optima - this is expected for some problems
 
 ### "Path lengths are very different"
 - Ensure same number of waypoints (both should use 128)
 - Check if one method shortcuts through narrow passages
-- Verify collision checking is consistent
+- **If comparing Diffusion vs BIT* OMPL**: Different collision checking can cause this!
+- **Solution**: Use BIT* GPU for fair comparison with identical collision checking
+
+### "Success rates are very different"
+- **Most likely cause**: Different collision checking methods!
+- BIT* OMPL uses geometric collision detection (different from diffusion's SDF)
+- **Solution**: Use `bitstar_gpu_baseline.py` for same collision checking
 
 ---
 
 ## Summary Checklist
 
+**For Fair Comparisons (Recommended):**
 - [ ] Run diffusion model, save results with start/goal
-- [ ] Run BIT* using `--use-diffusion-problem --diffusion-results` flags with same problem
-- [ ] Verify environment configurations match
-- [ ] Compare on same metrics (path length, time, success)
+- [ ] Run **BIT* GPU** using `--use-diffusion-problem --diffusion-results` flags
+- [ ] Verify **same collision checking method** (SDF-based) ✅
+- [ ] Compare on same metrics (path length, time, success, smoothness)
 - [ ] Report sample size (N problems) for statistical validity
 - [ ] Mention training time for diffusion vs zero training for BIT*
-- [ ] Acknowledge complementary strengths of both methods
+- [ ] **Explicitly state that you used the same collision checking in your paper/report**
+
+**Optional: Compare against OMPL baselines**
+- [ ] Run OMPL BIT* using `bitstar_baseline.py` (note: different collision checking)
+- [ ] Acknowledge that OMPL uses geometric collision checking vs SDF
 
 ---
 
-For more details, see:
-- `README_BASELINES.md` - Overview of metrics and baseline running
-- `bitstar_baseline.py` - BIT* implementation with fair comparison mode
+## Files Reference
+
+- `bitstar_gpu_baseline.py` - **GPU-based BIT* with SDF collision (RECOMMENDED)**
+- `bitstar_baseline.py` - OMPL-based BIT* with geometric collision
 - `compare_results.py` - Automated comparison script
 - `view_metrics.py` - View diffusion model metrics
+- `FAIR_COMPARISON_GUIDE.md` - This guide
