@@ -1,98 +1,125 @@
 """
-Minimal BIT* Template for Motion Planning
-A simplified template for implementing BIT* baseline comparison with diffusion model.
+BIT* Algorithm Implementation for Motion Planning
+Pure algorithmic implementation of Batch Informed Trees (BIT*) without using OMPL.
 
-TODO: Fill in the sections marked with TODO to complete the implementation.
+This implements the BIT* algorithm from:
+"Batch Informed Trees (BIT*): Sampling-based optimal planning via the heuristically
+guided search of implicit random geometric graphs" by Gammell et al.
 """
 import os
 import sys
 import time
 import numpy as np
+from heapq import heappush, heappop
+from collections import defaultdict
 
 # IMPORTANT: Import isaacgym FIRST to avoid import order issues
 import isaacgym
-
-# Add pybullet_ompl to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../deps/pybullet_ompl'))
-
-import pybullet as p
-from pybullet_utils import bullet_client
-from pb_ompl.pb_ompl import PbOMPL, PbOMPLRobot
 
 import torch
 from torch_robotics.torch_utils.torch_utils import get_torch_device, to_torch, to_numpy
 from torch_robotics.trajectory.metrics import compute_path_length, compute_smoothness
 
 
+class Vertex:
+    """Represents a state/configuration in the search tree."""
+
+    def __init__(self, state, vertex_id):
+        self.state = np.array(state, dtype=np.float64)
+        self.id = vertex_id
+        self.parent = None
+        self.children = []
+        self.cost = float('inf')  # Cost-to-come from start
+
+    def __lt__(self, other):
+        return self.id < other.id  # For heap tie-breaking
+
+
+class Edge:
+    """Represents a potential connection between two vertices."""
+
+    def __init__(self, v1, v2, cost):
+        self.v1 = v1
+        self.v2 = v2
+        self.cost = cost
+
+    def __lt__(self, other):
+        return self.cost < other.cost
+
+
 class MinimalBITStarBaseline:
-    """Minimal BIT* baseline planner template."""
+    """BIT* algorithm implementation."""
 
     def __init__(
         self,
         robot,  # torch_robotics robot instance
-        robot_urdf_path: str,
+        robot_urdf_path: str = None,  # Not used in pure algorithmic implementation
         planner_name: str = "BITstar",
         allowed_planning_time: float = 60.0,
         interpolate_num: int = 128,
         device: str = "cuda:0",
+        batch_size: int = 100,
+        rewire_factor: float = 1.1,
+        max_edge_length: float = None,
     ):
         """
-        Initialize the BIT* baseline planner.
-
-        TODO: Understand what each parameter does and how to use them.
+        Initialize the BIT* planner.
 
         Args:
-            robot: torch_robotics robot instance (for computing metrics)
-            robot_urdf_path: Path to robot URDF file
-            planner_name: OMPL planner name (BITstar, RRTConnect, etc.)
+            robot: torch_robotics robot instance (for collision checking and metrics)
+            robot_urdf_path: Not used (kept for compatibility)
+            planner_name: Planner name (kept for compatibility)
             allowed_planning_time: Max time for planning in seconds
             interpolate_num: Number of waypoints in final trajectory
             device: Device for torch computations
+            batch_size: Number of samples per batch
+            rewire_factor: Radius factor for edge connections
+            max_edge_length: Maximum edge length (None = auto-compute)
         """
-        self.planner_name = planner_name
+        self.torch_robot = robot
         self.allowed_planning_time = allowed_planning_time
         self.interpolate_num = interpolate_num
-        self.torch_robot = robot
+        self.batch_size = batch_size
+        self.rewire_factor = rewire_factor
 
         self.device = get_torch_device(device)
         self.tensor_args = {"device": self.device, "dtype": torch.float32}
 
-        # TODO 1: Initialize PyBullet client
-        # Hint: Use bullet_client.BulletClient(p.DIRECT) for headless mode
-        # Hint: Set gravity with pybullet_client.setGravity(0, 0, -9.8)
-        self.pybullet_client = None  # TODO: Replace with actual initialization
+        # Get configuration space bounds
+        self.q_min = to_numpy(robot.q_min)
+        self.q_max = to_numpy(robot.q_max)
+        self.dof = len(self.q_min)
 
-        # TODO 2: Load robot URDF into PyBullet
-        # Hint: Use p.loadURDF(robot_urdf_path, [0, 0, 0])
-        self.robot_id = None  # TODO: Replace with loaded robot ID
+        # Compute max edge length if not provided
+        if max_edge_length is None:
+            self.max_edge_length = np.linalg.norm(self.q_max - self.q_min) * 0.1
+        else:
+            self.max_edge_length = max_edge_length
 
-        # TODO 3: Create PbOMPLRobot wrapper
-        # Hint: link_name_ee = robot.link_name_ee if hasattr(robot, 'link_name_ee') else 'ee_link'
-        # Hint: self.robot = PbOMPLRobot(self.pybullet_client, self.robot_id, link_name_ee=link_name_ee)
-        self.robot = None  # TODO: Replace with PbOMPLRobot instance
+        # BIT* data structures
+        self.vertices = []
+        self.vertex_id_counter = 0
+        self.samples = []  # Unconnected samples
+        self.edge_queue = []  # Priority queue of edges to process
+        self.vertex_queue = []  # Priority queue of vertices to expand
 
-        # Initialize obstacles list (will be set later)
-        self.obstacles = []
+        # Tree structure
+        self.start_vertex = None
+        self.goal_vertex = None
+        self.goal_region_radius = 0.1  # Radius to consider goal reached
 
-        # TODO 4: Setup OMPL interface
-        # Hint: Create PbOMPL instance with client, robot, obstacles
-        # Hint: Call set_planner(planner_name) to select the planner
-        self.pb_ompl_interface = None  # TODO: Replace with PbOMPL instance
+        # Environment (will be set via set_obstacles)
+        self.env = None
 
-        print(f"Initialized {planner_name} planner (template)")
+        print(f"Initialized BIT* algorithm (batch_size={batch_size})")
 
-    def set_obstacles(self, obstacles):
-        """Set environment obstacles."""
-        # TODO 5: Store obstacles and update OMPL interface
-        # Hint: self.obstacles = obstacles
-        # Hint: self.pb_ompl_interface.set_obstacles(self.obstacles)
-        pass  # TODO: Implement
+    def set_obstacles(self, env):
+        """Set environment for collision checking."""
+        self.env = env
 
     def plan(self, start_state, goal_state, debug=False):
         """
-        Plan a trajectory from start to goal using the configured planner.
-
-        TODO: Implement the core planning function.
+        Plan a trajectory from start to goal using BIT* algorithm.
 
         Args:
             start_state: Starting configuration (numpy array or list)
@@ -107,86 +134,293 @@ class MinimalBITStarBaseline:
                 - path_length: float
                 - smoothness: float
         """
-        # TODO 6: Convert states to Python float list
-        # Hint: OMPL needs native Python floats, not numpy types
-        # Hint: start_state = [float(x) for x in start_state]
-        start_state = None  # TODO: Convert start_state
-        goal_state = None   # TODO: Convert goal_state
-
-        # TODO 7: Set robot to start state
-        # Hint: self.robot.set_state(start_state)
-
-        # TODO 8: Call the planner and measure time
-        # Hint: Use time.time() to measure start and end
-        # Hint: Call self.pb_ompl_interface.plan(goal_state, allowed_time=..., interpolate_num=..., simplify_path=True)
         start_time = time.time()
 
-        results_dict = {}  # TODO: Replace with actual planning call
+        # Convert to numpy
+        start_state = np.array(start_state, dtype=np.float64)
+        goal_state = np.array(goal_state, dtype=np.float64)
+
+        # Initialize BIT* structures
+        self._initialize(start_state, goal_state)
+
+        # Main BIT* loop
+        iteration = 0
+        best_cost = float('inf')
+
+        while time.time() - start_time < self.allowed_planning_time:
+            iteration += 1
+
+            # Sample new batch if needed
+            if not self.edge_queue and not self.vertex_queue:
+                if debug and iteration > 1:
+                    print(f"Iteration {iteration}: Sampling new batch (current best: {best_cost:.3f})")
+                self._sample_batch()
+                self._update_edge_queue()
+
+            # Expand best vertex or process best edge
+            if self.vertex_queue and (not self.edge_queue or self._get_queue_value(self.vertex_queue) <= self._get_queue_value(self.edge_queue)):
+                self._expand_vertex()
+            elif self.edge_queue:
+                success = self._process_edge()
+                if success and self.goal_vertex is not None:
+                    new_cost = self.goal_vertex.cost
+                    if new_cost < best_cost:
+                        best_cost = new_cost
+                        if debug:
+                            print(f"  Found solution with cost: {best_cost:.3f}")
+
+            # Early termination if goal found
+            if self.goal_vertex is not None and self.goal_vertex.cost < float('inf'):
+                # Continue for a bit to potentially find better solutions
+                if time.time() - start_time > min(2.0, self.allowed_planning_time * 0.5):
+                    break
 
         planning_time = time.time() - start_time
-        results_dict['planning_time'] = planning_time
 
-        # TODO 9: Compute metrics if planning succeeded
-        if results_dict.get('success', False):
-            sol_path = results_dict['sol_path']
+        # Extract solution
+        if self.goal_vertex is not None and self.goal_vertex.cost < float('inf'):
+            raw_path = self._extract_path()
+            sol_path = self._interpolate_path(raw_path, self.interpolate_num)
 
-            # TODO 10: Convert solution path to torch tensor
-            # Hint: Add batch dimension with [None, ...]
-            # Hint: sol_path_torch = to_torch(sol_path[None, ...], **self.tensor_args)
-            sol_path_torch = None  # TODO: Convert to torch
-
-            # TODO 11: Compute path length metric
-            # Hint: Use compute_path_length(sol_path_torch, self.torch_robot)
-            # Hint: Extract scalar value with [0].item()
-            path_length = 0.0  # TODO: Compute path length
-
-            # TODO 12: Compute smoothness metric
-            # Hint: Use compute_smoothness(sol_path_torch, self.torch_robot)
-            smoothness = 0.0  # TODO: Compute smoothness
-
-            results_dict['path_length'] = path_length
-            results_dict['smoothness'] = smoothness
-            results_dict['num_waypoints'] = len(sol_path)
+            # Compute metrics
+            sol_path_torch = to_torch(sol_path[None, ...], **self.tensor_args)
+            path_length = compute_path_length(sol_path_torch, self.torch_robot)[0].item()
+            smoothness = compute_smoothness(sol_path_torch, self.torch_robot)[0].item()
 
             if debug:
                 print(f"\n{'='*80}")
                 print(f"Planning SUCCESS")
                 print(f"  Planning time: {planning_time:.3f} sec")
+                print(f"  Iterations: {iteration}")
+                print(f"  Vertices: {len(self.vertices)}")
                 print(f"  Path length: {path_length:.3f}")
                 print(f"  Smoothness: {smoothness:.3f}")
                 print(f"{'='*80}\n")
-        else:
-            # Planning failed
-            results_dict['path_length'] = float('inf')
-            results_dict['smoothness'] = float('inf')
-            results_dict['num_waypoints'] = 0
 
+            return {
+                'success': True,
+                'sol_path': sol_path,
+                'planning_time': planning_time,
+                'path_length': path_length,
+                'smoothness': smoothness,
+                'num_waypoints': len(sol_path),
+            }
+        else:
             if debug:
                 print(f"\n{'='*80}")
                 print(f"Planning FAILED after {planning_time:.3f} sec")
+                print(f"  Iterations: {iteration}")
+                print(f"  Vertices: {len(self.vertices)}")
                 print(f"{'='*80}\n")
 
-        return results_dict
+            return {
+                'success': False,
+                'sol_path': None,
+                'planning_time': planning_time,
+                'path_length': float('inf'),
+                'smoothness': float('inf'),
+                'num_waypoints': 0,
+            }
+
+    def _initialize(self, start_state, goal_state):
+        """Initialize BIT* data structures."""
+        self.vertices = []
+        self.vertex_id_counter = 0
+        self.samples = []
+        self.edge_queue = []
+        self.vertex_queue = []
+
+        # Create start vertex
+        self.start_vertex = Vertex(start_state, self.vertex_id_counter)
+        self.vertex_id_counter += 1
+        self.start_vertex.cost = 0.0
+        self.vertices.append(self.start_vertex)
+
+        # Store goal state (will connect when sampled)
+        self.goal_state = goal_state
+        self.goal_vertex = None
+
+        # Add goal to samples
+        goal_sample = Vertex(goal_state, self.vertex_id_counter)
+        self.vertex_id_counter += 1
+        self.samples.append(goal_sample)
+
+    def _sample_batch(self):
+        """Sample a batch of random configurations."""
+        for _ in range(self.batch_size):
+            # Uniform random sampling in configuration space
+            q = np.random.uniform(self.q_min, self.q_max)
+
+            # Check collision
+            if not self._is_collision_free(q):
+                continue
+
+            # Create vertex
+            v = Vertex(q, self.vertex_id_counter)
+            self.vertex_id_counter += 1
+            self.samples.append(v)
+
+    def _update_edge_queue(self):
+        """Update edge queue with potential connections."""
+        # Add edges from tree vertices to samples
+        for v_tree in self.vertices:
+            for v_sample in self.samples:
+                dist = self._distance(v_tree.state, v_sample.state)
+                if dist <= self.max_edge_length:
+                    # Estimated cost through this edge
+                    edge_cost = v_tree.cost + dist + self._heuristic(v_sample.state)
+                    heappush(self.edge_queue, (edge_cost, Edge(v_tree, v_sample, dist)))
+
+    def _expand_vertex(self):
+        """Expand the best vertex from the vertex queue."""
+        if not self.vertex_queue:
+            return
+
+        _, v = heappop(self.vertex_queue)
+
+        # Add edges to nearby samples
+        for v_sample in self.samples:
+            dist = self._distance(v.state, v_sample.state)
+            if dist <= self.max_edge_length:
+                edge_cost = v.cost + dist + self._heuristic(v_sample.state)
+                heappush(self.edge_queue, (edge_cost, Edge(v, v_sample, dist)))
+
+    def _process_edge(self):
+        """Process the best edge from the edge queue."""
+        if not self.edge_queue:
+            return False
+
+        _, edge = heappop(self.edge_queue)
+        v1, v2, cost = edge.v1, edge.v2, edge.cost
+
+        # Check if this edge is still useful
+        estimated_cost = v1.cost + cost + self._heuristic(v2.state)
+        if self.goal_vertex is not None and estimated_cost >= self.goal_vertex.cost:
+            return False
+
+        # Check if v2 can be improved
+        new_cost = v1.cost + cost
+        if new_cost >= v2.cost:
+            return False
+
+        # Check collision on edge
+        if not self._is_edge_collision_free(v1.state, v2.state):
+            return False
+
+        # Add v2 to tree or rewire
+        if v2 in self.samples:
+            self.samples.remove(v2)
+            self.vertices.append(v2)
+
+            # Check if this is the goal
+            if np.linalg.norm(v2.state - self.goal_state) < self.goal_region_radius:
+                self.goal_vertex = v2
+
+        # Update parent and cost
+        if v2.parent is not None:
+            v2.parent.children.remove(v2)
+
+        v2.parent = v1
+        v2.cost = new_cost
+        v1.children.append(v2)
+
+        # Add to vertex queue for expansion
+        queue_value = v2.cost + self._heuristic(v2.state)
+        heappush(self.vertex_queue, (queue_value, v2))
+
+        return True
+
+    def _distance(self, q1, q2):
+        """Compute distance between two configurations."""
+        return np.linalg.norm(q1 - q2)
+
+    def _heuristic(self, q):
+        """Heuristic estimate of cost-to-go to goal."""
+        return np.linalg.norm(q - self.goal_state)
+
+    def _is_collision_free(self, q):
+        """Check if a configuration is collision-free."""
+        if self.env is None:
+            return True
+
+        q_torch = to_torch(q, **self.tensor_args)
+        return not self.torch_robot.check_self_collision(q_torch) and \
+               not self.env.check_collision(q_torch)
+
+    def _is_edge_collision_free(self, q1, q2, resolution=10):
+        """Check if an edge is collision-free."""
+        for alpha in np.linspace(0, 1, resolution):
+            q = q1 * (1 - alpha) + q2 * alpha
+            if not self._is_collision_free(q):
+                return False
+        return True
+
+    def _extract_path(self):
+        """Extract path from start to goal."""
+        path = []
+        v = self.goal_vertex
+        while v is not None:
+            path.append(v.state)
+            v = v.parent
+        return np.array(path[::-1])
+
+    def _interpolate_path(self, path, num_waypoints):
+        """Interpolate path to have exactly num_waypoints."""
+        if len(path) == 0:
+            return path
+
+        if len(path) == num_waypoints:
+            return path
+
+        # Compute cumulative distances
+        distances = np.zeros(len(path))
+        for i in range(1, len(path)):
+            distances[i] = distances[i-1] + np.linalg.norm(path[i] - path[i-1])
+
+        total_distance = distances[-1]
+        if total_distance < 1e-6:
+            return np.tile(path[0], (num_waypoints, 1))
+
+        # Interpolate uniformly
+        interpolated_path = []
+        for i in range(num_waypoints):
+            target_dist = total_distance * i / (num_waypoints - 1)
+
+            # Find segment
+            idx = np.searchsorted(distances, target_dist)
+            if idx == 0:
+                interpolated_path.append(path[0])
+            elif idx >= len(path):
+                interpolated_path.append(path[-1])
+            else:
+                # Linear interpolation within segment
+                alpha = (target_dist - distances[idx-1]) / (distances[idx] - distances[idx-1])
+                q = path[idx-1] * (1 - alpha) + path[idx] * alpha
+                interpolated_path.append(q)
+
+        return np.array(interpolated_path)
+
+    def _get_queue_value(self, queue):
+        """Get the best value from a queue without popping."""
+        if not queue:
+            return float('inf')
+        return queue[0][0]
 
     def terminate(self):
-        """Cleanup PyBullet connection."""
-        # TODO 13: Disconnect PyBullet client
-        # Hint: self.pybullet_client.disconnect()
-        pass  # TODO: Implement
+        """Cleanup (no-op for pure algorithmic implementation)."""
+        pass
 
 
 def run_minimal_example():
     """
     Run a minimal example with Panda robot in Spheres3D environment.
-
-    TODO: Complete this example function to test your implementation.
     """
     from torch_robotics.environments import EnvSpheres3D
     from torch_robotics.robots.robot_panda import RobotPanda
     from torch_robotics.torch_utils.seed import fix_random_seed
 
     print("\n" + "="*80)
-    print("Minimal BIT* Template - Testing Your Implementation")
+    print("BIT* Algorithm - Testing Implementation")
     print("="*80 + "\n")
 
     # Fix random seed for reproducibility
@@ -195,40 +429,38 @@ def run_minimal_example():
     device = get_torch_device("cuda:0")
     tensor_args = {"device": device, "dtype": torch.float32}
 
-    # TODO 14: Create environment
-    # Hint: env = EnvSpheres3D(precompute_sdf_obj_fixed=False, sdf_cell_size=0.05, tensor_args=tensor_args)
-    env = None  # TODO: Create environment
+    # Create environment
+    env = EnvSpheres3D(precompute_sdf_obj_fixed=False, sdf_cell_size=0.05, tensor_args=tensor_args)
 
-    # TODO 15: Create robot
-    # Hint: robot = RobotPanda(use_object_collision_spheres=True, tensor_args=tensor_args)
-    robot = None  # TODO: Create robot
+    # Create robot
+    robot = RobotPanda(use_object_collision_spheres=True, tensor_args=tensor_args)
 
-    # TODO 16: Sample random start and goal configurations
-    # Hint: q_start = robot.sample_q_pos()
-    # Hint: q_goal = robot.sample_q_pos()
-    # Hint: Convert to numpy with to_numpy()
-    start_state = None  # TODO: Sample and convert start
-    goal_state = None   # TODO: Sample and convert goal
+    # Sample random start and goal configurations
+    q_start = robot.sample_q_pos()
+    q_goal = robot.sample_q_pos()
+    start_state = to_numpy(q_start)
+    goal_state = to_numpy(q_goal)
 
     print(f"Start state: {start_state}")
     print(f"Goal state: {goal_state}")
 
-    # TODO 17: Get robot URDF path
-    # Hint: robot_urdf_path = robot.robot_urdf_file
-    robot_urdf_path = None  # TODO: Get URDF path
+    # Initialize BIT* planner
+    baseline = MinimalBITStarBaseline(
+        robot=robot,
+        allowed_planning_time=30.0,
+        interpolate_num=128,
+        device=device,
+        batch_size=100,
+    )
+    baseline.set_obstacles(env)
 
-    # TODO 18: Initialize your baseline planner
-    # Hint: Pass robot, robot_urdf_path, planner_name, etc.
-    baseline = None  # TODO: Create MinimalBITStarBaseline instance
+    # Plan from start to goal
+    result = baseline.plan(start_state, goal_state, debug=True)
 
-    # TODO 19: Plan from start to goal
-    # Hint: result = baseline.plan(start_state, goal_state, debug=True)
-    result = None  # TODO: Call plan method
-
-    # TODO 20: Print results
+    # Print results
     if result and result.get('success'):
         print("\n" + "="*80)
-        print("YOUR IMPLEMENTATION WORKS!")
+        print("BIT* IMPLEMENTATION WORKS!")
         print("="*80)
         print(f"Path length: {result['path_length']:.3f}")
         print(f"Smoothness: {result['smoothness']:.3f}")
@@ -236,20 +468,18 @@ def run_minimal_example():
         print("="*80 + "\n")
     else:
         print("\n" + "="*80)
-        print("Planning failed - check your implementation")
+        print("Planning failed - may need more time or different parameters")
         print("="*80 + "\n")
 
-    # TODO 21: Cleanup
-    # Hint: baseline.terminate()
+    # Cleanup
+    baseline.terminate()
 
     return result
 
 
 def load_diffusion_problem_and_plan():
     """
-    Load a problem from diffusion model results and plan with your BIT* implementation.
-
-    TODO: Complete this function to compare with diffusion model.
+    Load a problem from diffusion model results and plan with BIT* implementation.
     """
     print("\n" + "="*80)
     print("Loading Problem from Diffusion Model Results")
@@ -257,55 +487,60 @@ def load_diffusion_problem_and_plan():
 
     diffusion_results_file = "logs/2/results_single_plan-000.pt"
 
-    # TODO 22: Check if diffusion results exist
+    # Check if diffusion results exist
     if not os.path.exists(diffusion_results_file):
         print(f"Error: {diffusion_results_file} not found")
         print("Run the diffusion model first: python inference.py")
         return None
 
-    # TODO 23: Load diffusion results
-    # Hint: diff_results = torch.load(diffusion_results_file, map_location='cpu')
-    diff_results = None  # TODO: Load results
+    # Load diffusion results
+    diff_results = torch.load(diffusion_results_file, map_location='cpu')
 
-    # TODO 24: Extract start and goal states
-    # Hint: start_state = to_numpy(diff_results['q_pos_start'])
-    # Hint: goal_state = to_numpy(diff_results['q_pos_goal'])
-    start_state = None  # TODO: Extract start
-    goal_state = None   # TODO: Extract goal
+    # Extract start and goal states
+    start_state = to_numpy(diff_results['q_pos_start'])
+    goal_state = to_numpy(diff_results['q_pos_goal'])
 
-    # TODO 25: Extract diffusion path length for comparison
-    # Hint: diff_path_length = float(diff_results['metrics']['trajs_best']['path_length'])
-    diff_path_length = None  # TODO: Extract path length
+    # Extract diffusion path length for comparison
+    diff_path_length = float(diff_results['metrics']['trajs_best']['path_length'])
 
     print(f"Diffusion model path length: {diff_path_length:.3f}")
     print(f"Start state: {start_state}")
     print(f"Goal state: {goal_state}")
 
-    # TODO 26: Setup environment and robot (same as run_minimal_example)
+    # Setup environment and robot
     from torch_robotics.environments import EnvSpheres3D
     from torch_robotics.robots.robot_panda import RobotPanda
 
     device = get_torch_device("cuda:0")
     tensor_args = {"device": device, "dtype": torch.float32}
 
-    env = None      # TODO: Create environment
-    robot = None    # TODO: Create robot
-    baseline = None # TODO: Create baseline planner
+    env = EnvSpheres3D(precompute_sdf_obj_fixed=False, sdf_cell_size=0.05, tensor_args=tensor_args)
+    robot = RobotPanda(use_object_collision_spheres=True, tensor_args=tensor_args)
 
-    # TODO 27: Plan with your BIT* implementation
-    result = None  # TODO: Call plan method
+    # Initialize BIT* planner
+    baseline = MinimalBITStarBaseline(
+        robot=robot,
+        allowed_planning_time=60.0,
+        interpolate_num=128,
+        device=device,
+        batch_size=100,
+    )
+    baseline.set_obstacles(env)
 
-    # TODO 28: Compare with diffusion
+    # Plan with BIT* implementation
+    result = baseline.plan(start_state, goal_state, debug=True)
+
+    # Compare with diffusion
     if result and result.get('success'):
         print("\n" + "="*80)
-        print("COMPARISON: Your BIT* vs Diffusion Model")
+        print("COMPARISON: BIT* vs Diffusion Model")
         print("="*80)
         print(f"Diffusion path length: {diff_path_length:.3f}")
         print(f"BIT* path length:      {result['path_length']:.3f}")
 
         if result['path_length'] < diff_path_length:
             improvement = (diff_path_length - result['path_length']) / diff_path_length * 100
-            print(f"\n🎉 Your BIT* found a {improvement:.1f}% shorter path!")
+            print(f"\nBIT* found a {improvement:.1f}% shorter path!")
         elif result['path_length'] > diff_path_length:
             diff = (result['path_length'] - diff_path_length) / diff_path_length * 100
             print(f"\nDiffusion found a {diff:.1f}% shorter path")
@@ -314,8 +549,8 @@ def load_diffusion_problem_and_plan():
 
         print("="*80 + "\n")
 
-    # TODO 29: Cleanup
-    # Hint: baseline.terminate()
+    # Cleanup
+    baseline.terminate()
 
     return result
 
@@ -323,7 +558,7 @@ def load_diffusion_problem_and_plan():
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Minimal BIT* Template")
+    parser = argparse.ArgumentParser(description="BIT* Algorithm Implementation")
     parser.add_argument("--mode", default="minimal",
                        choices=["minimal", "compare"],
                        help="Run minimal example or compare with diffusion")
@@ -331,16 +566,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print("\n" + "="*80)
-    print("MINIMAL BIT* TEMPLATE - IMPLEMENTATION EXERCISE")
+    print("BIT* ALGORITHM IMPLEMENTATION")
     print("="*80)
-    print("\nThis template helps you implement BIT* baseline from scratch.")
-    print("Follow the TODO comments in the code to complete the implementation.\n")
-    print("Steps:")
-    print("  1. Fill in the TODOs in MinimalBITStarBaseline.__init__")
-    print("  2. Fill in the TODOs in MinimalBITStarBaseline.plan")
-    print("  3. Fill in the TODOs in run_minimal_example")
-    print("  4. Test with: python bitstar_minimal_template.py --mode minimal")
-    print("  5. Once working, compare with diffusion: python bitstar_minimal_template.py --mode compare")
+    print("\nPure algorithmic implementation of Batch Informed Trees (BIT*).")
+    print("This implementation does not use OMPL - it's a from-scratch algorithm.\n")
+    print("Modes:")
+    print("  minimal  - Test BIT* on a random problem")
+    print("  compare  - Compare BIT* with diffusion model results")
     print("="*80 + "\n")
 
     if args.mode == "minimal":
@@ -349,5 +581,4 @@ if __name__ == "__main__":
         result = load_diffusion_problem_and_plan()
 
     if result is None:
-        print("\n⚠️  Implementation incomplete - fill in the TODOs!")
-        print("See the comments in the code for hints.\n")
+        print("\nExecution completed with no result.")
