@@ -306,6 +306,10 @@ class BITStarBaseline:
             # Plan for a short interval
             iter_time = min(check_interval, time_remaining)
 
+            # Print batch status before planning
+            if debug and iteration > 1:
+                print(f"\n[{elapsed:.2f}s] Batch {iteration}: Current best: {current_best_length:.3f}")
+
             # For first iteration, we need to get the initial solution
             # For subsequent iterations, the planner continues optimizing
             if iteration == 1:
@@ -344,7 +348,10 @@ class BITStarBaseline:
                     first_solution_smoothness = smoothness_first
 
                     if debug:
-                        print(f"  [{elapsed:.2f}s] First solution found! Path length: {path_length:.3f}")
+                        print(f"\n{'='*60}")
+                        print(f"  [{elapsed:.2f}s] FIRST SOLUTION FOUND!")
+                        print(f"  Path length: {path_length:.3f}")
+                        print(f"{'='*60}\n")
 
                 # Track best solution
                 if path_length < current_best_length:
@@ -352,7 +359,7 @@ class BITStarBaseline:
                     best_solution = sol_path
 
                     if debug and iteration > 1:
-                        print(f"  [{elapsed:.2f}s] Improved solution! Path length: {path_length:.3f}")
+                        print(f"  [{elapsed:.2f}s] >>> Improved solution! Path length: {path_length:.3f}")
 
                 # Check if we've reached target quality
                 if target_path_length and path_length <= target_path_length:
@@ -361,7 +368,8 @@ class BITStarBaseline:
                         reached_target = True
 
                         if debug:
-                            print(f"  [{elapsed:.2f}s] Reached target quality! Path length: {path_length:.3f} <= {target_path_length:.3f}")
+                            print(f"  [{elapsed:.2f}s] *** BEAT TARGET! {path_length:.3f} <= {target_path_length:.3f}")
+                            print(f"  Stopping after beating target...")
 
                         # Early termination if we beat the target
                         break
