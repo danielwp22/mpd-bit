@@ -1,28 +1,27 @@
 """
-GPU-Accelerated BIT* Baseline for Motion Planning
-
-Pure Python implementation of Batch Informed Trees (BIT*) with GPU acceleration.
-Uses the same SDF-based collision checking as the diffusion model for fair comparison.
-
-Key Features:
-- GPU-accelerated batch collision checking (100 samples checked in parallel)
-- GPU-accelerated edge validation (10 interpolated points checked in parallel)
-- SDF-based collision detection (identical to diffusion model)
-- Pure PyTorch implementation (no OMPL dependency)
-
-Based on: "Batch Informed Trees (BIT*): Sampling-based optimal planning via the
-heuristically guided search of implicit random geometric graphs" by Gammell et al.
+BIT* Baseline for Motion Planning
+Runs BIT* planner from OMPL and computes metrics comparable to the diffusion model inference.
+Ensures fair comparison by using the same start/goal configurations and environment.
 """
 import os
 import sys
-import time
-import yaml
-import numpy as np
-from heapq import heappush, heappop
 
 # IMPORTANT: Import isaacgym FIRST to avoid import order issues
 import isaacgym
 
+import time
+import yaml
+import numpy as np
+from pathlib import Path
+
+# Add pybullet_ompl to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../deps/pybullet_ompl'))
+
+import pybullet as p
+from pybullet_utils import bullet_client
+from pb_ompl.pb_ompl import PbOMPL, PbOMPLRobot
+
+# Now safe to import torch
 import torch
 from torch_robotics.torch_utils.torch_utils import get_torch_device, to_torch, to_numpy
 from torch_robotics.trajectory.metrics import compute_path_length
@@ -32,16 +31,27 @@ def compute_smoothness_finite_diff(trajs):
     """
     Compute smoothness using finite differences (for position-only trajectories).
 
+    Smoothness = sum of acceleration magnitudes along the trajectory.
+
     Args:
-        trajs: Trajectory tensor of shape (batch, horizon, q_dim)
+        trajs: Trajectory tensor of shape (batch, horizon, q_dim) containing only positions
 
     Returns:
-        smoothness: Tensor of shape (batch,)
+        smoothness: Tensor of shape (batch,) with smoothness values
     """
-    assert trajs.ndim == 3
-    velocities = torch.diff(trajs, dim=1)
-    accelerations = torch.diff(velocities, dim=1)
-    smoothness = torch.linalg.norm(accelerations, dim=-1).sum(-1)
+    assert trajs.ndim == 3  # batch, horizon, q_dim
+
+    # Compute velocities using finite differences
+    # vel[t] = (pos[t+1] - pos[t])
+    velocities = torch.diff(trajs, dim=1)  # (batch, horizon-1, q_dim)
+
+    # Compute accelerations using finite differences on velocities
+    # acc[t] = (vel[t+1] - vel[t])
+    accelerations = torch.diff(velocities, dim=1)  # (batch, horizon-2, q_dim)
+
+    # Compute smoothness as sum of acceleration norms
+    smoothness = torch.linalg.norm(accelerations, dim=-1).sum(-1)  # (batch,)
+
     return smoothness
 
 
@@ -53,8 +63,6 @@ def convert_to_serializable(obj):
         return [convert_to_serializable(v) for v in obj]
     elif isinstance(obj, np.ndarray):
         return obj.tolist()
-    elif isinstance(obj, torch.Tensor):
-        return obj.cpu().numpy().tolist()
     elif isinstance(obj, (np.float32, np.float64)):
         return float(obj)
     elif isinstance(obj, (np.int32, np.int64)):
@@ -67,675 +75,761 @@ def convert_to_serializable(obj):
         return obj
 
 
-class Vertex:
-    """Represents a state/configuration in the search tree."""
-
-    def __init__(self, state, vertex_id):
-        self.state = state  # torch tensor for GPU operations
-        self.id = vertex_id
-        self.parent = None
-        self.children = []
-        self.cost = float('inf')
-
-    def __lt__(self, other):
-        return self.id < other.id
-
-
-class Edge:
-    """Represents a potential connection between two vertices."""
-
-    def __init__(self, v1, v2, cost):
-        self.v1 = v1
-        self.v2 = v2
-        self.cost = cost
-
-    def __lt__(self, other):
-        return self.cost < other.cost
+def save_problem_configuration(
+    start_state, goal_state, env_config,
+    save_path="problem_config.pt"
+):
+    """Save start/goal and environment configuration for reproducibility."""
+    config = {
+        'start_state': start_state,
+        'goal_state': goal_state,
+        'env_config': env_config,
+    }
+    torch.save(config, save_path)
+    print(f"Saved problem configuration to {save_path}")
 
 
-class BITStarGPU:
-    """
-    GPU-accelerated BIT* algorithm implementation with batch collision checking.
+def load_problem_configuration(load_path="problem_config.pt"):
+    """Load start/goal and environment configuration."""
+    if not os.path.exists(load_path):
+        print(f"Warning: {load_path} not found")
+        return None
 
-    This implementation uses:
-    - GPU-accelerated batch sampling (batch_size samples checked at once)
-    - GPU-accelerated batch edge checking (10 interpolated points checked at once)
-    - SDF-based collision detection (same as diffusion model for fair comparison)
-    """
+    config = torch.load(load_path, map_location='cpu')
+    print(f"Loaded problem configuration from {load_path}")
+    return config
+
+
+def save_diffusion_problem_config(diffusion_results_file, save_path="problem_config.pt"):
+    """Extract and save problem configuration from diffusion model results."""
+    results = torch.load(diffusion_results_file, map_location='cpu')
+
+    # Extract start and goal
+    start_state = to_numpy(results['q_pos_start'])
+    goal_state = to_numpy(results['q_pos_goal'])
+
+    # Environment configuration (if available)
+    # For now, we'll need to manually specify or extract from the environment
+    env_config = {
+        'note': 'Environment configuration needs to be saved separately'
+    }
+
+    config = {
+        'start_state': start_state,
+        'goal_state': goal_state,
+        'env_config': env_config,
+    }
+
+    torch.save(config, save_path)
+    print(f"Extracted problem configuration from {diffusion_results_file}")
+    print(f"Saved to {save_path}")
+    return config
+
+
+class BITStarBaseline:
+    """BIT* baseline planner for comparison with diffusion models."""
 
     def __init__(
         self,
-        robot,
-        env,  # Environment for collision checking
+        robot,  # torch_robotics robot instance
+        robot_urdf_path: str,
+        planner_name: str = "BITstar",
         allowed_planning_time: float = 60.0,
-        interpolate_num: int = 128,
+        min_distance_robot_env: float = 0.05,
+        interpolate_num: int = 128,  # Match inference trajectory resolution
         device: str = "cuda:0",
-        batch_size: int = 100,
-        max_edge_length: float = None,
-        goal_region_radius: float = 0.05,
     ):
-        """
-        Initialize GPU-accelerated BIT* planner.
-
-        Args:
-            robot: torch_robotics robot instance
-            env: Environment for SDF-based collision checking
-            allowed_planning_time: Max planning time in seconds
-            interpolate_num: Number of waypoints in final trajectory
-            device: Device for torch computations (cuda:0 or cpu)
-            batch_size: Number of samples to check in parallel per batch
-            max_edge_length: Maximum edge length (None = auto-compute as 15% of workspace diagonal)
-            goal_region_radius: Radius to consider goal reached
-        """
-        self.torch_robot = robot
-        self.env = env
+        self.planner_name = planner_name
         self.allowed_planning_time = allowed_planning_time
         self.interpolate_num = interpolate_num
-        self.batch_size = batch_size
-        self.goal_region_radius = goal_region_radius
+        self.torch_robot = robot  # For computing smoothness
 
-        # Device might already be a torch.device object or a string
-        if isinstance(device, str):
-            self.device = get_torch_device(device)
-        else:
-            self.device = device
+        self.device = get_torch_device(device)
         self.tensor_args = {"device": self.device, "dtype": torch.float32}
 
-        # Configuration space bounds
-        self.q_min = robot.q_pos_min
-        self.q_max = robot.q_pos_max
-        self.dof = len(self.q_min)
+        # Initialize PyBullet in DIRECT mode (headless)
+        self.pybullet_client = bullet_client.BulletClient(p.DIRECT)
+        self.pybullet_client.setGravity(0, 0, -9.8)
 
-        # Compute max edge length
-        if max_edge_length is None:
-            self.max_edge_length = torch.linalg.norm(self.q_max - self.q_min).item() * 0.15
-        else:
-            self.max_edge_length = max_edge_length
+        # Load robot
+        self.robot_id = p.loadURDF(robot_urdf_path, [0, 0, 0])
+        # Get end-effector link name from torch robot
+        link_name_ee = self.torch_robot.link_name_ee if hasattr(self.torch_robot, 'link_name_ee') else 'ee_link'
+        self.robot = PbOMPLRobot(self.pybullet_client, self.robot_id, link_name_ee=link_name_ee)
 
-        # BIT* data structures
-        self.vertices = []
-        self.vertex_id_counter = 0
-        self.samples = []
-        self.edge_queue = []
-        self.vertex_queue = []
+        # Initialize obstacles list (will be set later)
+        self.obstacles = []
 
-        self.start_vertex = None
-        self.goal_vertex = None
+        # Setup OMPL interface
+        self.pb_ompl_interface = PbOMPL(
+            self.pybullet_client,
+            self.robot,
+            self.obstacles,
+            min_distance_robot_env=min_distance_robot_env
+        )
+        self.pb_ompl_interface.set_planner(planner_name)
 
-        print(f"Initialized GPU-accelerated BIT* (batch_size={batch_size}, max_edge={self.max_edge_length:.3f})")
-        print(f"  Using batch collision checking: {batch_size} samples checked in parallel")
+        print(f"Initialized {planner_name} planner")
 
-    def plan(self, start_state, goal_state, target_path_length=None, debug=False):
+    def set_obstacles(self, obstacles):
+        """Set environment obstacles."""
+        self.obstacles = obstacles
+        self.pb_ompl_interface.set_obstacles(self.obstacles)
+
+    def plan(self, start_state, goal_state, debug=False):
         """
-        Plan trajectory from start to goal using BIT*.
-
-        Args:
-            start_state: Starting configuration
-            goal_state: Goal configuration
-            target_path_length: Target path length to beat (e.g., from diffusion baseline)
-                              If provided, planning continues until this is beaten or timeout
-            debug: Print debug information
+        Plan a trajectory from start to goal using BIT*.
 
         Returns:
-            results_dict with success, sol_path, planning_time, path_length, smoothness
+            results_dict with keys:
+                - success: bool
+                - sol_path: np.ndarray (interpolate_num, dof)
+                - planning_time: float
+                - path_length: float
+                - smoothness: float
+                - num_waypoints_before_interpolation: int
         """
+        # Convert to Python list of floats (OMPL needs native Python floats, not numpy)
+        start_state = [float(x) for x in start_state]
+        goal_state = [float(x) for x in goal_state]
+
+        self.robot.set_state(start_state)
+
         start_time = time.time()
 
-        # Convert to torch tensors
-        start_state = to_torch(start_state, **self.tensor_args)
-        goal_state = to_torch(goal_state, **self.tensor_args)
-
-        # Initialize
-        self._initialize(start_state, goal_state)
-
-        # Main BIT* loop
-        iteration = 0
-        best_cost = float('inf')
-        first_solution_time = None
-        first_solution_cost = None
-
-        if target_path_length and debug:
-            print(f"  Target path length to beat: {target_path_length:.3f}")
-
-        while time.time() - start_time < self.allowed_planning_time:
-            iteration += 1
-
-            # Sample new batch if queues empty
-            if not self.edge_queue and not self.vertex_queue:
-                if debug and iteration > 1:
-                    print(f"\n[{time.time() - start_time:.2f}s] Batch {iteration}: Current best: {best_cost:.3f}")
-                    print(f"  Tree vertices: {len(self.vertices)}, Samples: {len(self.samples)}")
-
-                self._sample_batch(debug=debug)
-
-                # Prune samples if we have a solution
-                if self.goal_vertex is not None and self.goal_vertex.cost < float('inf'):
-                    pruned = self._prune_samples()
-                    if debug and pruned > 0:
-                        print(f"  Pruned {pruned} samples that can't improve solution")
-
-                self._update_edge_queue()
-                if debug:
-                    print(f"  Edge queue size: {len(self.edge_queue)}, Vertex queue size: {len(self.vertex_queue)}")
-
-            # Expand vertex or process edge
-            if self.vertex_queue and (not self.edge_queue or
-                self._get_queue_value(self.vertex_queue) <= self._get_queue_value(self.edge_queue)):
-                self._expand_vertex()
-            elif self.edge_queue:
-                success = self._process_edge()
-                if success and self.goal_vertex is not None:
-                    new_cost = self.goal_vertex.cost
-                    if new_cost < best_cost:
-                        best_cost = new_cost
-
-                        # Track first solution
-                        if first_solution_time is None:
-                            first_solution_time = time.time() - start_time
-                            first_solution_cost = new_cost
-                            if debug:
-                                print(f"\n{'='*60}")
-                                print(f"  [{first_solution_time:.2f}s] FIRST SOLUTION FOUND!")
-                                print(f"  Path length: {best_cost:.3f}")
-                                print(f"{'='*60}\n")
-
-                            # Prune samples immediately after first solution
-                            pruned = self._prune_samples()
-                            if debug and pruned > 0:
-                                print(f"  Pruned {pruned} samples after finding first solution")
-                        else:
-                            if debug:
-                                print(f"  [{time.time() - start_time:.2f}s] >>> Improved solution! Path length: {best_cost:.3f}")
-
-                        # Check if we beat the target
-                        if target_path_length is not None and best_cost <= target_path_length:
-                            if debug:
-                                print(f"  [{time.time() - start_time:.2f}s] *** BEAT TARGET! {best_cost:.3f} <= {target_path_length:.3f}")
-                            # Continue optimizing for a bit more to see if we can do even better
-                            # But stop after 10% more of allowed time
-                            if time.time() - start_time > self.allowed_planning_time * 0.1:
-                                if debug:
-                                    print(f"  Stopping after beating target...")
-                                break
-
-            # Early termination only if no target specified
-            if target_path_length is None:
-                if self.goal_vertex is not None and self.goal_vertex.cost < float('inf'):
-                    if time.time() - start_time > min(2.0, self.allowed_planning_time * 0.3):
-                        if debug:
-                            print(f"  Early termination (no target specified)")
-                        break
+        results_dict = self.pb_ompl_interface.plan(
+            goal_state,
+            allowed_time=self.allowed_planning_time,
+            interpolate_num=self.interpolate_num,
+            simplify_path=True,
+            debug=debug,
+        )
 
         planning_time = time.time() - start_time
+        results_dict['planning_time'] = planning_time
 
-        # Extract solution
-        if self.goal_vertex is not None and self.goal_vertex.cost < float('inf'):
-            raw_path = self._extract_path()
-            sol_path = self._interpolate_path(raw_path, self.interpolate_num)
+        if results_dict['success']:
+            sol_path = results_dict['sol_path']
 
-            # Compute metrics
-            sol_path_torch = sol_path[None, ...]  # Add batch dimension
+            # Convert to torch for metric computation
+            sol_path_torch = to_torch(sol_path[None, ...], **self.tensor_args)  # Add batch dimension
+
+            # Compute path length
             path_length = compute_path_length(sol_path_torch, self.torch_robot)[0].item()
+
+            # Compute smoothness using finite differences (BITstar returns position-only trajectories)
             smoothness = compute_smoothness_finite_diff(sol_path_torch)[0].item()
+
+            results_dict['path_length'] = path_length
+            results_dict['smoothness'] = smoothness
+            results_dict['num_waypoints'] = len(sol_path)
 
             if debug:
                 print(f"\n{'='*80}")
                 print(f"Planning SUCCESS")
                 print(f"  Planning time: {planning_time:.3f} sec")
-                print(f"  Iterations: {iteration}")
-                print(f"  Vertices: {len(self.vertices)}")
                 print(f"  Path length: {path_length:.3f}")
                 print(f"  Smoothness: {smoothness:.3f}")
+                print(f"  Num waypoints: {len(sol_path)}")
                 print(f"{'='*80}\n")
-
-            return {
-                'success': True,
-                'sol_path': to_numpy(sol_path),
-                'planning_time': planning_time,
-                'path_length': path_length,
-                'smoothness': smoothness,
-                'num_waypoints': len(sol_path),
-                'first_solution_time': first_solution_time,
-                'first_solution_cost': first_solution_cost,
-            }
         else:
             if debug:
                 print(f"\n{'='*80}")
                 print(f"Planning FAILED after {planning_time:.3f} sec")
-                print(f"  Iterations: {iteration}")
-                print(f"  Vertices: {len(self.vertices)}")
                 print(f"{'='*80}\n")
+            results_dict['path_length'] = float('inf')
+            results_dict['smoothness'] = float('inf')
+            results_dict['num_waypoints'] = 0
 
-            return {
-                'success': False,
-                'sol_path': None,
-                'planning_time': planning_time,
-                'path_length': float('inf'),
-                'smoothness': float('inf'),
-                'num_waypoints': 0,
-                'first_solution_time': None,
-                'first_solution_cost': None,
-            }
+        return results_dict
 
-    def _initialize(self, start_state, goal_state):
-        """Initialize BIT* data structures."""
-        self.vertices = []
-        self.vertex_id_counter = 0
-        self.samples = []
-        self.edge_queue = []
-        self.vertex_queue = []
-
-        # Create start vertex
-        self.start_vertex = Vertex(start_state, self.vertex_id_counter)
-        self.vertex_id_counter += 1
-        self.start_vertex.cost = 0.0
-        self.vertices.append(self.start_vertex)
-
-        # Store goal
-        self.goal_state = goal_state
-        self.goal_vertex = None
-
-        # Add goal to samples
-        goal_sample = Vertex(goal_state, self.vertex_id_counter)
-        self.vertex_id_counter += 1
-        self.samples.append(goal_sample)
-
-    def _sample_batch(self, debug=False):
-        """Sample batch of collision-free configurations (GPU-accelerated)."""
-        # Generate batch of random samples on GPU
-        q_batch = torch.rand(self.batch_size, self.dof, **self.tensor_args)
-        q_batch = self.q_min + q_batch * (self.q_max - self.q_min)
-
-        # Batch collision check on GPU
-        collision_free_mask = self._batch_collision_check(q_batch)
-
-        # Count collision-free samples
-        num_collision_free = collision_free_mask.sum().item()
-
-        # Add collision-free samples to the list
-        for i in range(self.batch_size):
-            if collision_free_mask[i]:
-                v = Vertex(q_batch[i], self.vertex_id_counter)
-                self.vertex_id_counter += 1
-                self.samples.append(v)
-
-        if debug:
-            print(f"  Sampled {num_collision_free}/{self.batch_size} collision-free configs")
-
-        return num_collision_free
-
-    def _prune_samples(self):
-        """Prune samples that cannot improve current solution."""
-        if self.goal_vertex is None or self.goal_vertex.cost == float('inf'):
-            return 0
-
-        best_cost = self.goal_vertex.cost
-        original_count = len(self.samples)
-
-        # Keep only samples that could potentially improve the solution
-        self.samples = [
-            s for s in self.samples
-            if self._heuristic(s.state) < best_cost  # Optimistic estimate
-        ]
-
-        pruned = original_count - len(self.samples)
-        return pruned
-
-    def _batch_collision_check(self, q_batch):
+    def plan_anytime(self, start_state, goal_state, target_path_length=None, debug=False):
         """
-        Batch collision checking on GPU using SDF-based detection.
+        Plan using BIT*'s anytime optimization capability.
+        Tracks when the first solution is found and when a solution as good as
+        the target path length is found.
 
         Args:
-            q_batch: (batch_size, dof) tensor of configurations
+            start_state: Starting configuration
+            goal_state: Goal configuration
+            target_path_length: Target path length to beat (typically from diffusion model)
+            debug: Print debug information
 
         Returns:
-            collision_free: (batch_size,) boolean tensor
+            results_dict with keys:
+                - success: bool
+                - sol_path: np.ndarray (interpolate_num, dof)
+                - planning_time_total: float - total time spent
+                - planning_time_first_solution: float - time to first solution
+                - planning_time_target_quality: float - time to reach target quality (or None)
+                - path_length: float - final path length
+                - path_length_first: float - path length of first solution
+                - smoothness: float
+                - smoothness_first: float
+                - reached_target_quality: bool
+                - num_waypoints: int
+                - improvement_ratio: float - final_length / first_length
         """
-        batch_size = q_batch.shape[0]
+        # Convert to Python list of floats
+        start_state = [float(x) for x in start_state]
+        goal_state = [float(x) for x in goal_state]
 
-        # Get robot collision sphere positions for all configurations
-        # Shape: (batch_size, num_spheres, 3)
-        x_pos_batch = self.torch_robot.fk_map_collision(q_batch, pos_only=True)
+        self.robot.set_state(start_state)
 
-        # Check collision for each configuration
-        collision_free = torch.ones(batch_size, dtype=torch.bool, device=self.device)
+        # Tracking variables
+        start_time = time.time()
+        first_solution_time = None
+        target_quality_time = None
+        first_solution_path_length = None
+        first_solution_smoothness = None
+        reached_target = False
 
-        # For each configuration
-        for i in range(batch_size):
-            x_pos = x_pos_batch[i]  # (num_spheres, 3)
+        # We need to monitor solutions as they improve
+        # Use a polling approach: run planner for short intervals and check solution quality
+        check_interval = 0.5  # Check every 0.5 seconds
+        current_best_length = float('inf')
+        best_solution = None
 
-            # Compute SDF for all spheres at once
-            # Reshape for batch computation: (num_spheres, 3)
-            sdf_values = self.env.compute_sdf(x_pos)  # (num_spheres,)
+        if debug and target_path_length:
+            print(f"\n{'='*80}")
+            print(f"Anytime Planning - Target path length: {target_path_length:.3f}")
+            print(f"{'='*80}\n")
 
-            # Configuration is in collision if any sphere has negative SDF
-            if (sdf_values < 0.0).any():
-                collision_free[i] = False
+        # Run planning in intervals
+        elapsed = 0.0
+        iteration = 0
 
-        return collision_free
+        while elapsed < self.allowed_planning_time:
+            iteration += 1
+            time_remaining = self.allowed_planning_time - elapsed
 
-    def _is_collision_free(self, q):
-        """
-        Check if configuration is collision-free using SDF-based collision detection.
-        This uses the same method as the diffusion model.
-        """
-        # Use batch checking for single configuration
-        result = self._batch_collision_check(q.unsqueeze(0))
-        return result[0].item()
+            # Plan for a short interval
+            iter_time = min(check_interval, time_remaining)
 
-    def _update_edge_queue(self):
-        """Update edge queue with potential connections (optimized with batch GPU operations)."""
-        if len(self.vertices) == 0 or len(self.samples) == 0:
-            return
+            # Print batch status before planning
+            if debug and iteration > 1:
+                print(f"\n[{elapsed:.2f}s] Batch {iteration}: Current best: {current_best_length:.3f}")
 
-        # Stack all vertex and sample states for batch distance computation
-        vertex_states = torch.stack([v.state for v in self.vertices])  # (n_vertices, dof)
-        sample_states = torch.stack([s.state for s in self.samples])  # (n_samples, dof)
-
-        # Compute all pairwise distances on GPU: (n_vertices, n_samples)
-        # Use broadcasting: (n_vertices, 1, dof) - (1, n_samples, dof)
-        dists = torch.norm(vertex_states.unsqueeze(1) - sample_states.unsqueeze(0), dim=2)
-
-        # Find pairs within max_edge_length
-        valid_pairs = (dists <= self.max_edge_length).nonzero(as_tuple=False)
-
-        # Add edges for valid pairs
-        for v_idx, s_idx in valid_pairs:
-            v_tree = self.vertices[v_idx]
-            v_sample = self.samples[s_idx]
-            dist = dists[v_idx, s_idx].item()
-            edge_cost = v_tree.cost + dist + self._heuristic(v_sample.state)
-            heappush(self.edge_queue, (edge_cost, Edge(v_tree, v_sample, dist)))
-
-    def _expand_vertex(self):
-        """Expand the best vertex (optimized with batch GPU operations)."""
-        if not self.vertex_queue:
-            return
-
-        _, v = heappop(self.vertex_queue)
-
-        if len(self.samples) == 0:
-            return
-
-        # Stack all sample states for batch distance computation
-        sample_states = torch.stack([s.state for s in self.samples])  # (n_samples, dof)
-
-        # Compute distances from v to all samples on GPU
-        dists = torch.norm(sample_states - v.state.unsqueeze(0), dim=1)  # (n_samples,)
-
-        # Find samples within max_edge_length
-        valid_indices = (dists <= self.max_edge_length).nonzero(as_tuple=False).squeeze(-1)
-
-        # Add edges for valid samples
-        for idx in valid_indices:
-            idx = idx.item()
-            v_sample = self.samples[idx]
-            dist = dists[idx].item()
-            edge_cost = v.cost + dist + self._heuristic(v_sample.state)
-            heappush(self.edge_queue, (edge_cost, Edge(v, v_sample, dist)))
-
-    def _process_edge(self):
-        """Process the best edge."""
-        if not self.edge_queue:
-            return False
-
-        _, edge = heappop(self.edge_queue)
-        v1, v2, cost = edge.v1, edge.v2, edge.cost
-
-        # Check if edge is useful
-        estimated_cost = v1.cost + cost + self._heuristic(v2.state)
-        if self.goal_vertex is not None and estimated_cost >= self.goal_vertex.cost:
-            return False
-
-        # Check if v2 can be improved
-        new_cost = v1.cost + cost
-        if new_cost >= v2.cost:
-            return False
-
-        # Check edge collision
-        if not self._is_edge_collision_free(v1.state, v2.state):
-            return False
-
-        # Track if this is a new vertex being added to tree
-        is_new_vertex = False
-
-        # Add v2 to tree if it's still a sample
-        if v2 in self.samples:
-            self.samples.remove(v2)
-            self.vertices.append(v2)
-            is_new_vertex = True
-
-        # Update parent
-        if v2.parent is not None:
-            v2.parent.children.remove(v2)
-
-        v2.parent = v1
-        v2.cost = new_cost
-        v1.children.append(v2)
-
-        # Check if this vertex is in the goal region (check for both new and improved vertices)
-        if torch.linalg.norm(v2.state - self.goal_state).item() < self.goal_region_radius:
-            if self.goal_vertex is None or v2.cost < self.goal_vertex.cost:
-                self.goal_vertex = v2
-
-        # Add to vertex queue for expansion
-        queue_value = v2.cost + self._heuristic(v2.state)
-        heappush(self.vertex_queue, (queue_value, v2))
-
-        return True
-
-    def _heuristic(self, q):
-        """Heuristic cost-to-go."""
-        return torch.linalg.norm(q - self.goal_state).item()
-
-    def _is_edge_collision_free(self, q1, q2, resolution=10):
-        """Check edge collision (GPU-accelerated batch checking)."""
-        # Generate all interpolated points along the edge
-        alphas = torch.linspace(0, 1, resolution, **self.tensor_args)
-        # Broadcast and compute all interpolated configurations at once
-        # q1 and q2 are (dof,), alphas is (resolution,)
-        # Result: (resolution, dof)
-        q_interp = q1[None, :] * (1 - alphas[:, None]) + q2[None, :] * alphas[:, None]
-
-        # Batch collision check all interpolated points at once
-        collision_free_mask = self._batch_collision_check(q_interp)
-
-        # Edge is collision-free only if all interpolated points are collision-free
-        return collision_free_mask.all().item()
-
-    def _extract_path(self):
-        """Extract path from start to goal."""
-        path = []
-        v = self.goal_vertex
-        while v is not None:
-            path.append(v.state)
-            v = v.parent
-        path.reverse()
-        return torch.stack(path)
-
-    def _interpolate_path(self, path, num_waypoints):
-        """Interpolate path to num_waypoints."""
-        if len(path) == 0:
-            return path
-        if len(path) == num_waypoints:
-            return path
-
-        # Compute cumulative distances
-        distances = torch.zeros(len(path), **self.tensor_args)
-        for i in range(1, len(path)):
-            distances[i] = distances[i-1] + torch.linalg.norm(path[i] - path[i-1])
-
-        total_distance = distances[-1]
-        if total_distance < 1e-6:
-            return path[0].repeat(num_waypoints, 1)
-
-        # Interpolate uniformly
-        interpolated_path = []
-        for i in range(num_waypoints):
-            target_dist = total_distance * i / (num_waypoints - 1)
-
-            # Find segment
-            idx = torch.searchsorted(distances, target_dist).item()
-            if idx == 0:
-                interpolated_path.append(path[0])
-            elif idx >= len(path):
-                interpolated_path.append(path[-1])
+            # For first iteration, we need to get the initial solution
+            # For subsequent iterations, the planner continues optimizing
+            if iteration == 1:
+                # First call - this will find initial solution
+                results_dict = self.pb_ompl_interface.plan(
+                    goal_state,
+                    allowed_time=iter_time,
+                    interpolate_num=self.interpolate_num,
+                    simplify_path=False,  # Don't simplify yet - we want to see progress
+                    debug=False,
+                )
             else:
-                # Linear interpolation
-                alpha = (target_dist - distances[idx-1]) / (distances[idx] - distances[idx-1])
-                q = path[idx-1] * (1 - alpha) + path[idx] * alpha
-                interpolated_path.append(q)
+                # Continue planning (BIT* is anytime)
+                # We need to call plan again with more time
+                # OMPL will continue from where it left off
+                results_dict = self.pb_ompl_interface.plan(
+                    goal_state,
+                    allowed_time=elapsed + iter_time,
+                    interpolate_num=self.interpolate_num,
+                    simplify_path=False,
+                    debug=False,
+                )
 
-        return torch.stack(interpolated_path)
+            elapsed = time.time() - start_time
 
-    def _get_queue_value(self, queue):
-        """Get best queue value."""
-        return queue[0][0] if queue else float('inf')
+            if results_dict['success']:
+                sol_path = results_dict['sol_path']
+                sol_path_torch = to_torch(sol_path[None, ...], **self.tensor_args)
+                path_length = compute_path_length(sol_path_torch, self.torch_robot)[0].item()
+
+                # Check if this is the first solution
+                if first_solution_time is None:
+                    first_solution_time = elapsed
+                    first_solution_path_length = path_length
+                    smoothness_first = compute_smoothness_finite_diff(sol_path_torch)[0].item()
+                    first_solution_smoothness = smoothness_first
+
+                    if debug:
+                        print(f"\n{'='*60}")
+                        print(f"  [{elapsed:.2f}s] FIRST SOLUTION FOUND!")
+                        print(f"  Path length: {path_length:.3f}")
+                        print(f"{'='*60}\n")
+
+                # Track best solution
+                if path_length < current_best_length:
+                    current_best_length = path_length
+                    best_solution = sol_path
+
+                    if debug and iteration > 1:
+                        print(f"  [{elapsed:.2f}s] >>> Improved solution! Path length: {path_length:.3f}")
+
+                # Check if we've reached target quality
+                if target_path_length and path_length <= target_path_length:
+                    if not reached_target:
+                        target_quality_time = elapsed
+                        reached_target = True
+
+                        if debug:
+                            print(f"  [{elapsed:.2f}s] *** BEAT TARGET! {path_length:.3f} <= {target_path_length:.3f}")
+                            print(f"  Stopping after beating target...")
+
+                        # Early termination if we beat the target
+                        break
+
+            # If we have a solution and reached target, stop
+            if reached_target:
+                break
+
+        # Finalize results
+        planning_time_total = time.time() - start_time
+
+        if best_solution is not None:
+            # Simplify and interpolate the final best solution
+            # Do a final interpolation
+            from scipy import interpolate
+
+            # Interpolate to desired resolution
+            if len(best_solution) != self.interpolate_num:
+                t_original = np.linspace(0, 1, len(best_solution))
+                t_new = np.linspace(0, 1, self.interpolate_num)
+
+                interpolator = interpolate.interp1d(
+                    t_original, best_solution, axis=0, kind='cubic'
+                )
+                sol_path_final = interpolator(t_new)
+            else:
+                sol_path_final = best_solution
+
+            sol_path_torch = to_torch(sol_path_final[None, ...], **self.tensor_args)
+            path_length_final = compute_path_length(sol_path_torch, self.torch_robot)[0].item()
+            smoothness_final = compute_smoothness_finite_diff(sol_path_torch)[0].item()
+
+            results_dict = {
+                'success': True,
+                'sol_path': sol_path_final,
+                'planning_time_total': planning_time_total,
+                'planning_time_first_solution': first_solution_time,
+                'planning_time_target_quality': target_quality_time,
+                'path_length': path_length_final,
+                'path_length_first': first_solution_path_length,
+                'smoothness': smoothness_final,
+                'smoothness_first': first_solution_smoothness,
+                'reached_target_quality': reached_target,
+                'num_waypoints': len(sol_path_final),
+                'improvement_ratio': path_length_final / first_solution_path_length if first_solution_path_length else 1.0,
+            }
+
+            if debug:
+                print(f"\n{'='*80}")
+                print(f"Anytime Planning COMPLETE")
+                print(f"  Total time: {planning_time_total:.3f} sec")
+                print(f"  First solution time: {first_solution_time:.3f} sec")
+                if target_quality_time:
+                    print(f"  Target quality time: {target_quality_time:.3f} sec")
+                print(f"  First solution length: {first_solution_path_length:.3f}")
+                print(f"  Final path length: {path_length_final:.3f}")
+                print(f"  Improvement: {(1 - results_dict['improvement_ratio'])*100:.1f}%")
+                if target_path_length:
+                    print(f"  Target path length: {target_path_length:.3f}")
+                    print(f"  Reached target: {reached_target}")
+                print(f"{'='*80}\n")
+        else:
+            # No solution found
+            results_dict = {
+                'success': False,
+                'planning_time_total': planning_time_total,
+                'planning_time_first_solution': None,
+                'planning_time_target_quality': None,
+                'path_length': float('inf'),
+                'path_length_first': float('inf'),
+                'smoothness': float('inf'),
+                'smoothness_first': float('inf'),
+                'reached_target_quality': False,
+                'num_waypoints': 0,
+                'improvement_ratio': 1.0,
+            }
+
+            if debug:
+                print(f"\n{'='*80}")
+                print(f"Anytime Planning FAILED after {planning_time_total:.3f} sec")
+                print(f"{'='*80}\n")
+
+        return results_dict
+
+    def evaluate_multiple_problems(
+        self,
+        start_states,
+        goal_states,
+        results_dir="logs_bitstar",
+        debug=False
+    ):
+        """
+        Evaluate planner on multiple start-goal pairs.
+
+        Args:
+            start_states: list of start configurations
+            goal_states: list of goal configurations
+            results_dir: directory to save results
+            debug: whether to print debug info
+
+        Returns:
+            statistics: dict with aggregated metrics
+        """
+        os.makedirs(results_dir, exist_ok=True)
+
+        n_problems = len(start_states)
+        results_all = []
+
+        success_count = 0
+        planning_times = []
+        path_lengths = []
+        smoothness_values = []
+
+        for i, (start, goal) in enumerate(zip(start_states, goal_states)):
+            print(f"\n{'='*80}")
+            print(f"Problem {i+1}/{n_problems}")
+            print(f"{'='*80}")
+
+            result = self.plan(start, goal, debug=debug)
+            results_all.append(result)
+
+            if result['success']:
+                success_count += 1
+                planning_times.append(result['planning_time'])
+                path_lengths.append(result['path_length'])
+                smoothness_values.append(result['smoothness'])
+
+                # Save individual trajectory
+                save_path = os.path.join(results_dir, f"trajectory_{i:03d}.npy")
+                np.save(save_path, result['sol_path'])
+
+        # Compute statistics
+        success_rate = success_count / n_problems
+
+        statistics = {
+            'planner': self.planner_name,
+            'n_problems': n_problems,
+            'success_count': success_count,
+            'success_rate': success_rate,
+            'planning_time_mean': np.mean(planning_times) if planning_times else float('inf'),
+            'planning_time_std': np.std(planning_times) if planning_times else 0.0,
+            'planning_time_min': np.min(planning_times) if planning_times else float('inf'),
+            'planning_time_max': np.max(planning_times) if planning_times else 0.0,
+            'path_length_mean': np.mean(path_lengths) if path_lengths else float('inf'),
+            'path_length_std': np.std(path_lengths) if path_lengths else 0.0,
+            'path_length_min': np.min(path_lengths) if path_lengths else float('inf'),
+            'path_length_max': np.max(path_lengths) if path_lengths else 0.0,
+            'smoothness_mean': np.mean(smoothness_values) if smoothness_values else float('inf'),
+            'smoothness_std': np.std(smoothness_values) if smoothness_values else 0.0,
+            'smoothness_min': np.min(smoothness_values) if smoothness_values else float('inf'),
+            'smoothness_max': np.max(smoothness_values) if smoothness_values else 0.0,
+        }
+
+        # Save statistics
+        with open(os.path.join(results_dir, "statistics.yaml"), 'w') as f:
+            yaml.dump(convert_to_serializable(statistics), f, default_flow_style=False)
+
+        # Print summary
+        print(f"\n{'='*80}")
+        print(f"EVALUATION SUMMARY - {self.planner_name}")
+        print(f"{'='*80}")
+        print(f"Success rate: {success_rate*100:.1f}% ({success_count}/{n_problems})")
+        if planning_times:
+            print(f"Planning time: {statistics['planning_time_mean']:.3f} ± {statistics['planning_time_std']:.3f} sec")
+            print(f"Path length: {statistics['path_length_mean']:.3f} ± {statistics['path_length_std']:.3f}")
+            print(f"Smoothness: {statistics['smoothness_mean']:.3f} ± {statistics['smoothness_std']:.3f}")
+        print(f"{'='*80}\n")
+
+        return statistics
+
+    def terminate(self):
+        """Cleanup PyBullet connection."""
+        self.pybullet_client.disconnect()
 
 
-def run_bitstar_gpu_on_diffusion_problem(
-    diffusion_results_file,
-    max_time=60.0,
-    batch_size=100,
-    interpolate_num=128,
-    device="cuda:0",
-    seed=2,
+# Example usage functions for different environments
+def run_panda_spheres3d(
+    n_problems=10,
+    planner_name="BITstar",
+    allowed_time=60.0,
+    seed=42,
+    use_same_problems_as_diffusion=False,
+    diffusion_results_file=None,
+    save_config_path=None,
+    use_anytime=False,
 ):
-    """
-    Run GPU-based BIT* on the same problem as diffusion model.
-    """
+    """Run BIT* on Panda Spheres3D environment."""
     from torch_robotics.environments import EnvSpheres3D
     from torch_robotics.robots.robot_panda import RobotPanda
+    from torch_robotics.tasks.tasks import PlanningTask
     from torch_robotics.torch_utils.seed import fix_random_seed
 
     fix_random_seed(seed)
 
-    device = get_torch_device(device)
+    device = get_torch_device("cuda:0")
     tensor_args = {"device": device, "dtype": torch.float32}
 
-    # Load diffusion results
-    print(f"\nLoading diffusion results from: {diffusion_results_file}")
-    diff_results = torch.load(diffusion_results_file, map_location='cpu')
-
-    start_state = diff_results['q_pos_start']
-    goal_state = diff_results['q_pos_goal']
-
-    print(f"Start state: {to_numpy(start_state)}")
-    print(f"Goal state: {to_numpy(goal_state)}")
-
-    # Extract diffusion model's path length as target to beat
-    target_path_length = None
-    if 'metrics' in diff_results and 'trajs_best' in diff_results['metrics']:
-        target_path_length = float(diff_results['metrics']['trajs_best']['path_length'])
-        print(f"\nDiffusion model path length: {target_path_length:.3f}")
-        print(f"BIT* will attempt to beat this baseline...")
-
-    # Create environment and robot (same collision checking as diffusion, but no SDF precomputation)
-    # Note: BIT* only needs point-wise collision checking, not gradients,
-    # so we don't precompute the SDF to save GPU memory
+    # Create environment and robot
+    # Don't precompute SDF - OMPL does its own collision checking
     env = EnvSpheres3D(
         precompute_sdf_obj_fixed=False,
-        sdf_cell_size=0.05,  # Larger cell size since we compute on-the-fly
+        sdf_cell_size=0.05,  # Larger cell size to save memory if needed
         tensor_args=tensor_args
     )
     robot = RobotPanda(use_object_collision_spheres=True, tensor_args=tensor_args)
 
-    # Initialize BIT* GPU
-    print(f"\nInitializing BIT* GPU planner...")
-    print(f"  Max time: {max_time}s")
-    print(f"  Batch size: {batch_size}")
+    # Get target path length from diffusion if using anytime mode
+    target_path_length = None
+    if use_anytime and use_same_problems_as_diffusion and diffusion_results_file:
+        diff_results = torch.load(diffusion_results_file, map_location='cpu')
+        if 'metrics' in diff_results and 'trajs_best' in diff_results['metrics']:
+            target_path_length = float(diff_results['metrics']['trajs_best']['path_length'])
+            print(f"\nTarget path length from diffusion: {target_path_length:.3f}")
 
-    planner = BITStarGPU(
+    # Sample or load start/goal pairs
+    if use_same_problems_as_diffusion and diffusion_results_file:
+        print(f"\nLoading start/goal from diffusion results: {diffusion_results_file}")
+        diff_results = torch.load(diffusion_results_file, map_location='cpu')
+
+        start_state = to_numpy(diff_results['q_pos_start'])
+        goal_state = to_numpy(diff_results['q_pos_goal'])
+
+        start_states = [start_state]
+        goal_states = [goal_state]
+
+        print(f"Start state: {start_state}")
+        print(f"Goal state: {goal_state}")
+
+        # Save configuration for reproducibility
+        if save_config_path:
+            env_config = {
+                'env_type': 'EnvSpheres3D',
+                'seed': seed,
+                'note': 'Environment uses same random seed as diffusion model'
+            }
+            save_problem_configuration(start_state, goal_state, env_config, save_config_path)
+    else:
+        print("Sampling new random start and goal configurations...")
+        start_states = []
+        goal_states = []
+        for i in range(n_problems):
+            # Sample random joint configurations
+            q_start = robot.random_q(n_samples=1)[0]  # Get single sample from batch
+            q_goal = robot.random_q(n_samples=1)[0]   # Get single sample from batch
+            start_states.append(to_numpy(q_start))
+            goal_states.append(to_numpy(q_goal))
+            print(f"  Sampled problem {i+1}/{n_problems}")
+            print(f"    Note: Not checking for collisions - OMPL will handle that")
+
+        # Save first problem configuration for reproducibility
+        if save_config_path and len(start_states) > 0:
+            env_config = {
+                'env_type': 'EnvSpheres3D',
+                'seed': seed,
+                'n_problems': n_problems,
+                'note': 'Random samples, not guaranteed collision-free'
+            }
+            save_problem_configuration(
+                start_states[0], goal_states[0], env_config, save_config_path
+            )
+
+    # Get robot URDF path
+    robot_urdf_path = robot.robot_urdf_file
+
+    # Initialize baseline planner (pass torch_robotics robot for smoothness computation)
+    baseline = BITStarBaseline(
         robot=robot,
-        env=env,
-        allowed_planning_time=max_time,
-        interpolate_num=interpolate_num,
-        device=device,
-        batch_size=batch_size,
+        robot_urdf_path=robot_urdf_path,
+        planner_name=planner_name,
+        allowed_planning_time=allowed_time,
+        min_distance_robot_env=0.05,
+        interpolate_num=128,
     )
 
-    # Plan (with target path length to beat)
-    print(f"\nRunning BIT* GPU planner...")
-    results = planner.plan(start_state, goal_state, target_path_length=target_path_length, debug=True)
+    # Evaluate using anytime mode or regular mode
+    results_dir = f"logs_{planner_name.lower()}_panda_spheres3d"
 
-    return results
+    if use_anytime:
+        statistics = run_anytime_evaluation(
+            baseline,
+            start_states,
+            goal_states,
+            target_path_length=target_path_length,
+            results_dir=results_dir,
+        )
+    else:
+        statistics = baseline.evaluate_multiple_problems(
+            start_states,
+            goal_states,
+            results_dir=results_dir,
+            debug=True
+        )
+
+    baseline.terminate()
+
+    return statistics
 
 
-def save_results(results_dict, results_dir="logs_bitstar_gpu_panda_spheres3d"):
-    """Save results."""
+def run_anytime_evaluation(baseline, start_states, goal_states, target_path_length=None, results_dir="logs_bitstar_anytime"):
+    """Run anytime evaluation on multiple problems."""
     os.makedirs(results_dir, exist_ok=True)
 
+    n_problems = len(start_states)
+    results_all = []
+
+    success_count = 0
+    planning_times_total = []
+    planning_times_first = []
+    planning_times_target = []
+    path_lengths = []
+    path_lengths_first = []
+    smoothness_values = []
+    reached_target_count = 0
+
+    for i, (start, goal) in enumerate(zip(start_states, goal_states)):
+        print(f"\n{'='*80}")
+        print(f"Problem {i+1}/{n_problems}")
+        print(f"{'='*80}")
+
+        result = baseline.plan_anytime(
+            start, goal,
+            target_path_length=target_path_length,
+            debug=True
+        )
+        results_all.append(result)
+
+        if result['success']:
+            success_count += 1
+            planning_times_total.append(result['planning_time_total'])
+            planning_times_first.append(result['planning_time_first_solution'])
+            path_lengths.append(result['path_length'])
+            path_lengths_first.append(result['path_length_first'])
+            smoothness_values.append(result['smoothness'])
+
+            if result['reached_target_quality']:
+                reached_target_count += 1
+                planning_times_target.append(result['planning_time_target_quality'])
+
+            # Save individual trajectory
+            save_path = os.path.join(results_dir, f"trajectory_{i:03d}.npy")
+            np.save(save_path, result['sol_path'])
+
+    # Compute statistics
+    success_rate = success_count / n_problems
+
     statistics = {
-        'planner': 'BITstar-GPU',
-        'n_problems': 1,
-        'success_count': 1 if results_dict['success'] else 0,
-        'success_rate': 1.0 if results_dict['success'] else 0.0,
-        'planning_time_mean': results_dict['planning_time'],
-        'planning_time_std': 0.0,
-        'path_length_mean': results_dict['path_length'],
-        'path_length_std': 0.0,
-        'smoothness_mean': results_dict['smoothness'],
-        'smoothness_std': 0.0,
+        'planner': baseline.planner_name,
+        'mode': 'anytime',
+        'n_problems': n_problems,
+        'success_count': success_count,
+        'success_rate': success_rate,
+        'target_path_length': target_path_length if target_path_length else None,
+        'reached_target_count': reached_target_count,
+        'reached_target_rate': reached_target_count / n_problems if target_path_length else None,
+
+        # Total planning time
+        'planning_time_total_mean': np.mean(planning_times_total) if planning_times_total else float('inf'),
+        'planning_time_total_std': np.std(planning_times_total) if planning_times_total else 0.0,
+
+        # First solution time
+        'planning_time_first_mean': np.mean(planning_times_first) if planning_times_first else float('inf'),
+        'planning_time_first_std': np.std(planning_times_first) if planning_times_first else 0.0,
+
+        # Time to reach target quality
+        'planning_time_target_mean': np.mean(planning_times_target) if planning_times_target else float('inf'),
+        'planning_time_target_std': np.std(planning_times_target) if planning_times_target else 0.0,
+
+        # Final path lengths
+        'path_length_mean': np.mean(path_lengths) if path_lengths else float('inf'),
+        'path_length_std': np.std(path_lengths) if path_lengths else 0.0,
+
+        # First solution path lengths
+        'path_length_first_mean': np.mean(path_lengths_first) if path_lengths_first else float('inf'),
+        'path_length_first_std': np.std(path_lengths_first) if path_lengths_first else 0.0,
+
+        # Smoothness
+        'smoothness_mean': np.mean(smoothness_values) if smoothness_values else float('inf'),
+        'smoothness_std': np.std(smoothness_values) if smoothness_values else 0.0,
     }
 
-    # Add anytime statistics if available
-    if results_dict.get('first_solution_time') is not None:
-        statistics['planning_time_first_mean'] = results_dict['first_solution_time']
-        statistics['planning_time_first_std'] = 0.0
-        statistics['path_length_first_mean'] = results_dict['first_solution_cost']
-        statistics['path_length_first_std'] = 0.0
-        statistics['mode'] = 'anytime'
-
-    stats_file = os.path.join(results_dir, "statistics.yaml")
-    with open(stats_file, 'w') as f:
+    # Save statistics
+    with open(os.path.join(results_dir, "statistics.yaml"), 'w') as f:
         yaml.dump(convert_to_serializable(statistics), f, default_flow_style=False)
-    print(f"\nSaved statistics to {stats_file}")
 
-    if results_dict['success']:
-        traj_file = os.path.join(results_dir, "trajectory_000.npy")
-        np.save(traj_file, results_dict['sol_path'])
-        print(f"Saved trajectory to {traj_file}")
+    # Print summary
+    print(f"\n{'='*80}")
+    print(f"ANYTIME EVALUATION SUMMARY - {baseline.planner_name}")
+    print(f"{'='*80}")
+    print(f"Success rate: {success_rate*100:.1f}% ({success_count}/{n_problems})")
+
+    if planning_times_first:
+        print(f"\nFirst solution:")
+        print(f"  Time: {statistics['planning_time_first_mean']:.3f} ± {statistics['planning_time_first_std']:.3f} sec")
+        print(f"  Path length: {statistics['path_length_first_mean']:.3f} ± {statistics['path_length_first_std']:.3f}")
+
+    if planning_times_total:
+        print(f"\nFinal solution (after optimization):")
+        print(f"  Time: {statistics['planning_time_total_mean']:.3f} ± {statistics['planning_time_total_std']:.3f} sec")
+        print(f"  Path length: {statistics['path_length_mean']:.3f} ± {statistics['path_length_std']:.3f}")
+        print(f"  Smoothness: {statistics['smoothness_mean']:.3f} ± {statistics['smoothness_std']:.3f}")
+
+    if target_path_length:
+        print(f"\nTarget quality (path length ≤ {target_path_length:.3f}):")
+        print(f"  Reached target: {reached_target_count}/{n_problems} ({reached_target_count/n_problems*100:.1f}%)")
+        if planning_times_target:
+            print(f"  Time to target: {statistics['planning_time_target_mean']:.3f} ± {statistics['planning_time_target_std']:.3f} sec")
+
+    print(f"{'='*80}\n")
+
+    return statistics
 
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Run GPU-based BIT* baseline")
+    parser = argparse.ArgumentParser(description="Run BIT* baseline planner")
+    parser.add_argument("--n-problems", type=int, default=1,
+                       help="Number of start-goal pairs to test")
+    parser.add_argument("--planner", default="BITstar",
+                       choices=["BITstar", "ABITstar", "AITstar", "RRTstar", "RRTConnect"],
+                       help="OMPL planner to use")
+    parser.add_argument("--time", type=float, default=60.0,
+                       help="Max planning time per problem (seconds)")
+    parser.add_argument("--seed", type=int, default=2,
+                       help="Random seed (use same as diffusion model for fair comparison)")
     parser.add_argument("--use-diffusion-problem", action="store_true",
                        help="Use same start/goal as diffusion model")
     parser.add_argument("--diffusion-results", default="logs/2/results_single_plan-000.pt",
-                       help="Path to diffusion model results")
-    parser.add_argument("--time", type=float, default=60.0,
-                       help="Max planning time (seconds)")
-    parser.add_argument("--batch-size", type=int, default=100,
-                       help="Batch size for sampling")
-    parser.add_argument("--device", default="cuda:0",
-                       help="Device (cuda:0 or cpu)")
-    parser.add_argument("--seed", type=int, default=2,
-                       help="Random seed")
+                       help="Path to diffusion model results file")
+    parser.add_argument("--save-config", default="problem_config.pt",
+                       help="Path to save problem configuration")
+    parser.add_argument("--anytime", action="store_true",
+                       help="Use anytime mode: track when first solution is found and when it reaches diffusion quality")
 
     args = parser.parse_args()
 
     print("\n" + "="*80)
-    print("GPU-Based BIT* Baseline")
-    print("Uses PyTorch + SDF collision checking (same as diffusion model)")
+    if args.anytime:
+        print(f"Running {args.planner} Baseline (ANYTIME MODE) on Panda Spheres3D Environment")
+    else:
+        print(f"Running {args.planner} Baseline on Panda Spheres3D Environment")
     print("="*80 + "\n")
 
-    if args.use_diffusion_problem:
-        results = run_bitstar_gpu_on_diffusion_problem(
-            diffusion_results_file=args.diffusion_results,
-            max_time=args.time,
-            batch_size=args.batch_size,
-            device=args.device,
-            seed=args.seed,
-        )
+    statistics = run_panda_spheres3d(
+        n_problems=args.n_problems,
+        planner_name=args.planner,
+        allowed_time=args.time,
+        seed=args.seed,
+        use_same_problems_as_diffusion=args.use_diffusion_problem,
+        diffusion_results_file=args.diffusion_results if args.use_diffusion_problem else None,
+        save_config_path=args.save_config if args.use_diffusion_problem else None,
+        use_anytime=args.anytime,
+    )
 
-        save_results(results)
+    print(f"\nDone! Results saved to logs_{args.planner.lower()}_panda_spheres3d/")
 
-        print(f"\nDone! Results saved to logs_bitstar_gpu_panda_spheres3d/")
-        print("\nTo compare with diffusion model:")
-        print("  python compare_results.py --baselines bitstar_gpu")
-    else:
-        print("Error: Must specify --use-diffusion-problem")
-        print("\nUsage:")
-        print("  python bitstar_gpu_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt")
+    print("\nUsage examples:")
+    print("  # Run on new random problems:")
+    print("  python bitstar_baseline.py --n-problems 5 --planner BITstar")
+    print("\n  # Use SAME problem as diffusion model (fair comparison):")
+    print("  python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt")
+    print("\n  # Use ANYTIME mode to track when BIT* reaches diffusion quality:")
+    print("  python bitstar_baseline.py --use-diffusion-problem --diffusion-results logs/2/results_single_plan-000.pt --anytime")
