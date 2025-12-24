@@ -1,0 +1,390 @@
+[
+  {
+    "problem_idx": 0,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.0105767250061035,
+    "bitstar_final_length": 4.930891990661621,
+    "time_to_first_solution": 0.1010580062866211,
+    "time_to_target_quality": 26.47918438911438,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 1,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 2,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 6.676896572113037,
+    "time_to_first_solution": 0.31363368034362793,
+    "time_to_target_quality": 0.313671350479126,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 3,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.446702480316162,
+    "bitstar_final_length": 5.526385307312012,
+    "time_to_first_solution": 0.6505200862884521,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 4,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 4.73912239074707,
+    "time_to_first_solution": 0.04258561134338379,
+    "time_to_target_quality": 0.0426182746887207,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 5,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 6,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 7,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.666016101837158,
+    "bitstar_final_length": 9.905656814575195,
+    "time_to_first_solution": 1.6622436046600342,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 8,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 11.989608764648438,
+    "time_to_first_solution": 0.6333551406860352,
+    "time_to_target_quality": 0.6333904266357422,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 9,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 10,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 11,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 12,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 13,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 14,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 6.370321750640869,
+    "time_to_first_solution": 1.200399398803711,
+    "time_to_target_quality": 1.2004313468933105,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 15,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.006454944610596,
+    "bitstar_final_length": 8.204629898071289,
+    "time_to_first_solution": 0.480593204498291,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 16,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 17,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 18,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 19,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 20,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 6.053204536437988,
+    "bitstar_final_length": 6.162430763244629,
+    "time_to_first_solution": 6.069335460662842,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 21,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 5.878490924835205,
+    "time_to_first_solution": 0.6342034339904785,
+    "time_to_target_quality": 0.6342344284057617,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 22,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 23,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 24,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 4.589280605316162,
+    "bitstar_final_length": 6.35689115524292,
+    "time_to_first_solution": 10.884840726852417,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 25,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 6.045799732208252,
+    "time_to_first_solution": 0.37323594093322754,
+    "time_to_target_quality": 0.37326669692993164,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 26,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 27,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 28,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 6.001058578491211,
+    "time_to_first_solution": 1.266775369644165,
+    "time_to_target_quality": 1.2668075561523438,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 29,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 30,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 31,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 32,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 33,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 34,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 4.746831893920898,
+    "bitstar_final_length": 9.148035049438477,
+    "time_to_first_solution": 1.5638353824615479,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 35,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 36,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 6.288204669952393,
+    "time_to_first_solution": 4.957424879074097,
+    "time_to_target_quality": 4.957458257675171,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 37,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 6.424110412597656,
+    "time_to_first_solution": 0.4531083106994629,
+    "time_to_target_quality": 0.453139066696167,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 38,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 39,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 40,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 41,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 4.9927592277526855,
+    "bitstar_final_length": 2.5906319618225098,
+    "time_to_first_solution": 0.5390548706054688,
+    "time_to_target_quality": 0.5390856266021729,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 42,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.61717414855957,
+    "bitstar_final_length": 6.770959854125977,
+    "time_to_first_solution": 0.45186662673950195,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 43,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 3.260272979736328,
+    "time_to_first_solution": 0.10066342353820801,
+    "time_to_target_quality": 0.10069108009338379,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 44,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 6.539214134216309,
+    "time_to_first_solution": 0.729076623916626,
+    "time_to_target_quality": 0.729109525680542,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 45,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 4.298062324523926,
+    "bitstar_final_length": 6.565234184265137,
+    "time_to_first_solution": 14.461665391921997,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 46,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 47,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 7.500131607055664,
+    "time_to_first_solution": 2.281869411468506,
+    "time_to_target_quality": 2.2819042205810547,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 48,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 49,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  }
+]

@@ -1,0 +1,32 @@
+bitstar:
+  mean_jerk_mean: 0.00197330822464375
+  mean_jerk_std: 0.0018281409540693758
+  n_problems: 50
+  n_success: 22
+  path_length_mean: 6.710481752048839
+  path_length_std: 2.066115389792406
+  planning_time_mean: 61.09302306175232
+  planning_time_std: 0.8149206899518212
+  smoothness_mean: 0.15459751007570463
+  smoothness_std: 0.14203568000137506
+  success_rate: 0.44
+  time_to_first_solution_mean: 3.3933909372849898
+  time_to_first_solution_std: 4.611101374346515
+comparison:
+  bitstar_beats_mpd_rate: 0.28
+  n_bitstar_beats_mpd: 14
+  n_both_success: 22
+mpd:
+  best_collision_free_path_length_mean: .inf
+  best_collision_free_path_length_std: .nan
+  collision_rate_mean: 0.841875
+  collision_rate_std: 0.27603922954899
+  inference_time_mean: 0.18711980819702148
+  inference_time_std: 0.047042740483800013
+  mean_collision_free_path_length_mean: .inf
+  mean_collision_free_path_length_std: .nan
+  n_problems: 50
+  n_success: 50
+  smoothness_mean: 203.3720361328125
+  smoothness_std: 22.074941834059654
+  success_rate: 1.0

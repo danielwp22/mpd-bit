@@ -1,0 +1,8 @@
+BIT* success rate: 0.800
+MPD collision-free success rate: 0.400
+BIT* time to first solution: mean=0.860s, std=0.686s
+MPD inference time: mean=1.214s, std=0.142s
+MPD best smoothness: mean=215.946, std=14.313
+BIT* initial smoothness: mean=0.308, std=0.162
+BIT* final smoothness: mean=0.085, std=0.002
+BIT* beats/matches MPD on common problems: 50.0%

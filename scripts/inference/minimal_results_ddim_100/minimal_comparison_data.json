@@ -1,0 +1,50 @@
+[
+  {
+    "problem_idx": 0,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 4.989384651184082,
+    "bitstar_final_length": 5.678803443908691,
+    "time_to_first_solution": 0.8888635635375977,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 1,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": Infinity,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 2,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 7.334820747375488,
+    "time_to_first_solution": 1.8045151233673096,
+    "time_to_target_quality": 1.8045454025268555,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 3,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.394166946411133,
+    "bitstar_final_length": 5.604621887207031,
+    "time_to_first_solution": 0.22461509704589844,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 4,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 5.795853614807129,
+    "time_to_first_solution": 0.5226078033447266,
+    "time_to_target_quality": 0.522636890411377,
+    "bitstar_beats_mpd": true
+  }
+]

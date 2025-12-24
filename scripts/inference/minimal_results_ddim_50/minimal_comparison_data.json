@@ -1,0 +1,48 @@
+[
+  {
+    "problem_idx": 0,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.014763832092285,
+    "bitstar_final_length": 9.211082458496094,
+    "time_to_first_solution": 1.8092396259307861,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 1,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 2,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 7.588256359100342,
+    "time_to_first_solution": 0.42389369010925293,
+    "time_to_target_quality": 0.4239199161529541,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 3,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.429757118225098,
+    "bitstar_final_length": 5.285094261169434,
+    "time_to_first_solution": 0.07222652435302734,
+    "time_to_target_quality": 4.221042633056641,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 4,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 8.685853958129883,
+    "time_to_first_solution": 0.328765869140625,
+    "time_to_target_quality": 0.3287961483001709,
+    "bitstar_beats_mpd": true
+  }
+]

@@ -1,0 +1,390 @@
+[
+  {
+    "problem_idx": 0,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.0105767250061035,
+    "bitstar_final_length": 4.930891990661621,
+    "time_to_first_solution": 0.10405397415161133,
+    "time_to_target_quality": 26.417831659317017,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 1,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 2,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 6.757062911987305,
+    "time_to_first_solution": 1.3040096759796143,
+    "time_to_target_quality": 1.3040382862091064,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 3,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.446702480316162,
+    "bitstar_final_length": 5.509059906005859,
+    "time_to_first_solution": 0.1318349838256836,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 4,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 5.518633842468262,
+    "time_to_first_solution": 1.6993145942687988,
+    "time_to_target_quality": 1.6993465423583984,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 5,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 6,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 7,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.666016101837158,
+    "bitstar_final_length": 11.31505012512207,
+    "time_to_first_solution": 11.381073713302612,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 8,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 12.42470645904541,
+    "time_to_first_solution": 4.827016115188599,
+    "time_to_target_quality": 4.827054738998413,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 9,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 10,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 11,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 12,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 13,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 14,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 7.221401214599609,
+    "time_to_first_solution": 7.912353277206421,
+    "time_to_target_quality": 7.912383079528809,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 15,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.006454944610596,
+    "bitstar_final_length": 8.055947303771973,
+    "time_to_first_solution": 0.6183505058288574,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 16,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 17,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 18,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 19,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 20,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 6.053204536437988,
+    "bitstar_final_length": 7.338515758514404,
+    "time_to_first_solution": 22.268981218338013,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 21,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 5.726491928100586,
+    "time_to_first_solution": 0.7262377738952637,
+    "time_to_target_quality": 0.7262639999389648,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 22,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 23,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 24,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 4.589280605316162,
+    "bitstar_final_length": 6.190107345581055,
+    "time_to_first_solution": 0.853294849395752,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 25,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 5.764031410217285,
+    "time_to_first_solution": 0.11771512031555176,
+    "time_to_target_quality": 0.11774182319641113,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 26,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 27,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 28,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 5.771831512451172,
+    "time_to_first_solution": 1.0547974109649658,
+    "time_to_target_quality": 1.0548293590545654,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 29,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 30,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 31,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 32,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 33,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 34,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 4.746831893920898,
+    "bitstar_final_length": 9.71063232421875,
+    "time_to_first_solution": 0.746605634689331,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 35,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 36,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 5.991790771484375,
+    "time_to_first_solution": 0.28900623321533203,
+    "time_to_target_quality": 0.2890348434448242,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 37,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 6.331973552703857,
+    "time_to_first_solution": 0.7413930892944336,
+    "time_to_target_quality": 0.7414257526397705,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 38,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 39,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 40,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 41,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 4.9927592277526855,
+    "bitstar_final_length": 2.4492576122283936,
+    "time_to_first_solution": 0.20536136627197266,
+    "time_to_target_quality": 0.20538973808288574,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 42,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 5.61717414855957,
+    "bitstar_final_length": 6.78732967376709,
+    "time_to_first_solution": 1.0542762279510498,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 43,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 3.299952507019043,
+    "time_to_first_solution": 0.07057976722717285,
+    "time_to_target_quality": 0.07060813903808594,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 44,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 7.310831546783447,
+    "time_to_first_solution": 3.909641742706299,
+    "time_to_target_quality": 3.909669876098633,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 45,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": 4.298062324523926,
+    "bitstar_final_length": 5.960888385772705,
+    "time_to_first_solution": 7.6335694789886475,
+    "time_to_target_quality": null,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 46,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 47,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 7.185122489929199,
+    "time_to_first_solution": 2.0494296550750732,
+    "time_to_target_quality": 2.049461603164673,
+    "bitstar_beats_mpd": true
+  },
+  {
+    "problem_idx": 48,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  },
+  {
+    "problem_idx": 49,
+    "bitstar_success": false,
+    "mpd_success": true,
+    "bitstar_beats_mpd": false
+  }
+]

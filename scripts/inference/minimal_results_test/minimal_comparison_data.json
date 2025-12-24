@@ -1,0 +1,12 @@
+[
+  {
+    "problem_idx": 0,
+    "bitstar_success": true,
+    "mpd_success": true,
+    "mpd_target_length": Infinity,
+    "bitstar_final_length": 5.605381965637207,
+    "time_to_first_solution": 3.9760384559631348,
+    "time_to_target_quality": 3.976067304611206,
+    "bitstar_beats_mpd": true
+  }
+]

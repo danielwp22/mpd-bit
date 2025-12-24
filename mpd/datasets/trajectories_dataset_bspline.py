@@ -325,9 +325,22 @@ class TrajectoryDatasetBspline(Dataset, abc.ABC):
         # Context data
         # end-effector pose goal
         if ee_pose_goal is None:
-            ee_pose_goal = self.planning_task.robot.get_EE_pose(
-                to_torch(q_goal, **self.planning_task.robot.tensor_args)
-            ).to(device if device is not None else self.tensor_args["device"])
+            # Check if q_goal is batched or unbatched
+            is_batched = q_goal.ndim > 1
+            q_goal_for_fk = to_torch(q_goal, **self.planning_task.robot.tensor_args)
+
+            # get_EE_pose expects batched input, add batch dim if needed
+            if not is_batched:
+                q_goal_for_fk = q_goal_for_fk.unsqueeze(0)
+
+            ee_pose_goal = self.planning_task.robot.get_EE_pose(q_goal_for_fk).to(
+                device if device is not None else self.tensor_args["device"]
+            )
+
+            # If input was unbatched, remove the batch dimension from output
+            if not is_batched:
+                ee_pose_goal = ee_pose_goal.squeeze(0)
+
         ee_pose_goal_orientation = rmat_to_flat(link_rot_from_link_tensor(ee_pose_goal))
         ee_pose_goal_position = link_pos_from_link_tensor(ee_pose_goal)
         fields_d[self.field_key_context_ee_goal_pose] = ee_pose_goal
